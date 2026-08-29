@@ -3,6 +3,7 @@
   "name": "birthday-card",
   "main": "worker/index.ts",
   "compatibility_date": "2026-08-01",
+  "routes": [{ "pattern": "birthday.card.gero.sh", "custom_domain": true }],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
