@@ -14,8 +14,8 @@ Deliberately small:
 | Layer   | Choice                                                                  |
 | ------- | ----------------------------------------------------------------------- |
 | Client  | Vite + vanilla TypeScript, CSS 3D transforms, `<canvas>` + Pointer Events |
-| Server  | [Hono](https://hono.dev) on Node ≥ 22.5, `node:sqlite` (built in)       |
-| Storage | One SQLite file in `data/` (strokes stored as JSON)                     |
+| Server  | [Hono](https://hono.dev) — runs on Cloudflare Workers (R2) or Node ≥ 22.5 (`node:sqlite`) |
+| Storage | One JSON object per card in R2, or one SQLite file in `data/`          |
 
 No frontend framework, no ORM, two runtime dependencies.
 
@@ -32,20 +32,48 @@ Open `http://localhost:5173`. To test on an iPad on the same network use the LAN
 
 ## Deploy
 
+### Cloudflare Workers (recommended — free tier covers this comfortably)
+
+The client is served by Workers Assets; the API runs in a Worker and stores each
+card as one JSON object in an R2 bucket (`worker/index.ts`, `wrangler.jsonc`).
+
+One-time setup:
+
+```sh
+npx wrangler login                                   # or set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID
+npx wrangler r2 bucket create birthday-card-cards    # name must match wrangler.jsonc
+```
+
+Then, every release:
+
+```sh
+npm run deploy      # vite build && wrangler deploy
+```
+
+You get `https://birthday-card.<your-subdomain>.workers.dev`; add a custom domain
+under Workers → Settings → Domains & Routes. `npm run dev:cf` runs the Worker
+locally with a simulated R2 bucket.
+
+### Node (self-hosted)
+
 ```sh
 npm run build      # -> dist/
 npm start          # NODE_ENV=production; Hono serves dist/ + /api on $PORT (default 8787)
 ```
 
-Environment: `PORT`, `DATA_DIR` (default `./data`). Put it behind any TLS-terminating proxy.
-Share links (`/c/:id`) get per-card `<title>`/OpenGraph tags injected server-side.
+Environment: `PORT`, `DATA_DIR` (default `./data`, holds the SQLite file). Needs a
+persistent disk and a TLS-terminating proxy in front (Caddy, Fly, Railway, …).
+
+Both targets inject per-card `<title>`/OpenGraph tags into `/c/:id` responses.
 
 ## Layout
 
 ```
 shared/types.ts        data model + limits, shared by client and server
-server/index.ts        Hono app: POST /api/cards, GET/PUT /api/cards/:id, static + SPA fallback
-server/db.ts           SQLite access
+server/app.ts          portable Hono app: POST /api/cards, GET/PUT /api/cards/:id (+ CardStore interface)
+server/index.ts        Node entry: SQLite store, static files + SPA fallback
+server/db.ts           SQLite CardStore
+worker/index.ts        Cloudflare Workers entry: R2 CardStore, Workers Assets
 src/main.ts            routes: /  /edit/:id  /c/:id
 src/lib/ink.ts         incremental stroke renderer (used live and for replay)
 src/lib/replay.ts      timeline compression + rAF playback

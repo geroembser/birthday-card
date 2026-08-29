@@ -1,24 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CardData, Stroke, ThemeId } from '../shared/types.ts';
-
-const DATA_DIR = process.env.DATA_DIR ?? 'data';
-mkdirSync(DATA_DIR, { recursive: true });
-
-const db = new DatabaseSync(join(DATA_DIR, 'cards.db'));
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  CREATE TABLE IF NOT EXISTS cards (
-    id          TEXT PRIMARY KEY,
-    edit_token  TEXT NOT NULL,
-    theme       TEXT NOT NULL,
-    recipient   TEXT NOT NULL DEFAULT '',
-    strokes     TEXT NOT NULL DEFAULT '[]',
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-  );
-`);
+import type { CardStore, StoredCard } from './app.ts';
+import type { Stroke, ThemeId } from '../shared/types.ts';
 
 interface Row {
   id: string;
@@ -30,44 +14,57 @@ interface Row {
   updated_at: string;
 }
 
-const insertStmt = db.prepare(
-  `INSERT INTO cards (id, edit_token, theme, recipient, strokes, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?)`,
-);
-const selectStmt = db.prepare(`SELECT * FROM cards WHERE id = ?`);
-const updateStmt = db.prepare(
-  `UPDATE cards SET theme = ?, recipient = ?, strokes = ?, updated_at = ? WHERE id = ?`,
-);
-
-function toCard(row: Row): CardData {
-  return {
-    id: row.id,
-    theme: row.theme as ThemeId,
-    recipient: row.recipient,
-    strokes: JSON.parse(row.strokes) as Stroke[],
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-export function insertCard(card: CardData, editToken: string): void {
-  insertStmt.run(
-    card.id,
-    editToken,
-    card.theme,
-    card.recipient,
-    JSON.stringify(card.strokes),
-    card.createdAt,
-    card.updatedAt,
+/** SQLite-backed store for the Node server (one file under DATA_DIR). */
+export function sqliteStore(dataDir: string): CardStore {
+  mkdirSync(dataDir, { recursive: true });
+  const db = new DatabaseSync(join(dataDir, 'cards.db'));
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS cards (
+      id          TEXT PRIMARY KEY,
+      edit_token  TEXT NOT NULL,
+      theme       TEXT NOT NULL,
+      recipient   TEXT NOT NULL DEFAULT '',
+      strokes     TEXT NOT NULL DEFAULT '[]',
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+  `);
+  const upsert = db.prepare(
+    `INSERT INTO cards (id, edit_token, theme, recipient, strokes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       theme = excluded.theme, recipient = excluded.recipient,
+       strokes = excluded.strokes, updated_at = excluded.updated_at`,
   );
-}
+  const select = db.prepare(`SELECT * FROM cards WHERE id = ?`);
 
-export function findCard(id: string): { card: CardData; editToken: string } | null {
-  const row = selectStmt.get(id) as Row | undefined;
-  if (!row) return null;
-  return { card: toCard(row), editToken: row.edit_token };
-}
-
-export function saveCard(card: CardData): void {
-  updateStmt.run(card.theme, card.recipient, JSON.stringify(card.strokes), card.updatedAt, card.id);
+  return {
+    async get(id) {
+      const row = select.get(id) as Row | undefined;
+      if (!row) return null;
+      return {
+        card: {
+          id: row.id,
+          theme: row.theme as ThemeId,
+          recipient: row.recipient,
+          strokes: JSON.parse(row.strokes) as Stroke[],
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        },
+        editToken: row.edit_token,
+      };
+    },
+    async put({ card, editToken }: StoredCard) {
+      upsert.run(
+        card.id,
+        editToken,
+        card.theme,
+        card.recipient,
+        JSON.stringify(card.strokes),
+        card.createdAt,
+        card.updatedAt,
+      );
+    },
+  };
 }

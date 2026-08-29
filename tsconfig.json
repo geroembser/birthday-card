@@ -15,5 +15,6 @@
     "allowImportingTsExtensions": true,
     "useDefineForClassFields": true
   },
-  "include": ["src", "server", "shared", "vite.config.ts"]
+  "include": ["src", "server", "shared", "vite.config.ts"],
+  "exclude": ["worker"]
 }
