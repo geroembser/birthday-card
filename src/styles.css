@@ -457,7 +457,7 @@ input {
 }
 .cover-art[data-theme='midnight'] .cover-deco {
   background-image:
-    radial-gradient(circle at 78% 22%, rgba(255, 233, 170, 0.35) 0 9cqw, transparent 22cqw),
+    radial-gradient(circle at 78% 22%, #f6e2a3 0 7cqw, rgba(246, 226, 163, 0.25) 10cqw, transparent 22cqw),
     radial-gradient(circle at 15% 25%, #fff 0 0.5cqw, transparent 0.8cqw),
     radial-gradient(circle at 70% 60%, #fff 0 0.35cqw, transparent 0.6cqw),
     radial-gradient(circle at 40% 85%, #ffe9aa 0 0.55cqw, transparent 0.9cqw),
