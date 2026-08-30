@@ -80,6 +80,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
           <button type="button" class="btn small" id="arrange-done">${icons.check} Done</button>
         </div>
         <div class="zoom-badge" id="zoom-badge" hidden></div>
+        <div class="eraser-cursor" id="eraser-cursor" hidden></div>
         <p class="rotate-hint">Turn your device sideways for a bigger card.</p>
       </div>
 
@@ -92,7 +93,8 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
         </div>
         <div class="tool-group">
           <button type="button" class="tool" id="photo" aria-label="Photos">${icons.photo}</button>
-          <button type="button" class="tool" id="undo" aria-label="Undo last stroke">${icons.undo}</button>
+          <button type="button" class="tool" id="eraser" aria-label="Eraser" aria-pressed="false">${icons.eraser}</button>
+          <button type="button" class="tool" id="undo" aria-label="Undo">${icons.undo}</button>
           <button type="button" class="tool" id="clear" aria-label="Clear the card">${icons.trash}</button>
         </div>
         <div class="popover" id="photo-menu" hidden>
@@ -129,6 +131,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   let color: string = INKS[0].color;
   let size: number = BRUSHES[1].size;
   let mode: Mode = 'write';
+  let tool: 'pen' | 'eraser' = 'pen';
   let selected: CardImage | null = null;
   const blobUrls = new Map<string, string>();
 
@@ -275,6 +278,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
   function setMode(m: Mode): void {
     mode = m;
+    if (m === 'arrange' && tool === 'eraser') setTool('pen');
     arrangeBar.hidden = m !== 'arrange';
     stage.classList.toggle('arranging', m === 'arrange');
     if (m === 'write') select(null);
@@ -338,6 +342,146 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     } catch {
       setStatus('Couldn’t remove photo', 'error');
     }
+  }
+
+  // --- history ------------------------------------------------------------------
+  type Action =
+    | { type: 'add'; stroke: Stroke }
+    | { type: 'erase'; removed: { index: number; stroke: Stroke }[] }
+    | { type: 'clear'; strokes: Stroke[] };
+  const history: Action[] = [];
+  function pushHistory(a: Action): void {
+    history.push(a);
+    if (history.length > 200) history.shift();
+    updateUndo();
+  }
+  function updateUndo(): void {
+    undoBtn.disabled = history.length === 0;
+  }
+  function undo(): void {
+    const a = history.pop();
+    if (!a) return;
+    if (a.type === 'add') {
+      const i = strokes.lastIndexOf(a.stroke);
+      if (i >= 0) strokes.splice(i, 1);
+    } else if (a.type === 'erase') {
+      for (const r of [...a.removed].sort((x, y) => x.index - y.index)) strokes.splice(Math.min(r.index, strokes.length), 0, r.stroke);
+    } else {
+      strokes.push(...a.strokes);
+    }
+    updateUndo();
+    render();
+    markStrokesChanged(true);
+  }
+
+  // --- eraser ---------------------------------------------------------------------
+  const ERASER_RADIUS_PX = 14; // on screen; converted to spread units at the current zoom
+  const eraserCursor = $(root, '#eraser-cursor');
+  const bboxCache = new WeakMap<Stroke, { x0: number; y0: number; x1: number; y1: number }>();
+  function bbox(s: Stroke) {
+    let b = bboxCache.get(s);
+    if (!b) {
+      b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      for (const p of s.points) {
+        if (p.x < b.x0) b.x0 = p.x;
+        if (p.x > b.x1) b.x1 = p.x;
+        if (p.y < b.y0) b.y0 = p.y;
+        if (p.y > b.y1) b.y1 = p.y;
+      }
+      bboxCache.set(s, b);
+    }
+    return b;
+  }
+  function segDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+    const qx = ax + t * dx - px;
+    const qy = ay + t * dy - py;
+    return qx * qx + qy * qy;
+  }
+  /** Does the stroke pass within `r` of the segment a→b? */
+  function strokeHits(s: Stroke, a: { x: number; y: number }, b: { x: number; y: number }, r: number): boolean {
+    const bb = bbox(s);
+    const pad = r + s.size;
+    if (Math.max(a.x, b.x) < bb.x0 - pad || Math.min(a.x, b.x) > bb.x1 + pad || Math.max(a.y, b.y) < bb.y0 - pad || Math.min(a.y, b.y) > bb.y1 + pad) return false;
+    const rr = (r + s.size / 2) ** 2;
+    const pts = s.points;
+    if (pts.length === 1) return segDist2(pts[0]!.x, pts[0]!.y, a.x, a.y, b.x, b.y) <= rr;
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1]!;
+      const q = pts[i]!;
+      // cheap and good enough: sample the eraser segment against each stroke segment's endpoints and midpoint
+      if (segDist2(p.x, p.y, a.x, a.y, b.x, b.y) <= rr || segDist2(q.x, q.y, a.x, a.y, b.x, b.y) <= rr) return true;
+      if (segDist2(a.x, a.y, p.x, p.y, q.x, q.y) <= rr || segDist2(b.x, b.y, p.x, p.y, q.x, q.y) <= rr) return true;
+    }
+    return false;
+  }
+  interface EraseDrag {
+    pointerId: number;
+    last: { x: number; y: number };
+    removed: { index: number; stroke: Stroke }[];
+  }
+  let erase: EraseDrag | null = null;
+  function eraseAlong(a: { x: number; y: number }, b: { x: number; y: number }): void {
+    const r = ERASER_RADIUS_PX / viewport.view.k;
+    let changed = false;
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      const s = strokes[i]!;
+      if (strokeHits(s, a, b, r)) {
+        erase!.removed.push({ index: i, stroke: s });
+        strokes.splice(i, 1);
+        changed = true;
+      }
+    }
+    if (changed) render();
+  }
+  function moveEraserCursor(e: PointerEvent): void {
+    const rect = stage.getBoundingClientRect();
+    eraserCursor.style.left = `${e.clientX - rect.left}px`;
+    eraserCursor.style.top = `${e.clientY - rect.top}px`;
+    eraserCursor.style.width = eraserCursor.style.height = `${ERASER_RADIUS_PX * 2}px`;
+  }
+  function startErase(e: PointerEvent): void {
+    if (viewport.pinching) return;
+    if (viewport.gesturing) viewport.cancelPointers();
+    try {
+      stage.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    const p = viewport.clientToContent(e.clientX, e.clientY);
+    erase = { pointerId: e.pointerId, last: p, removed: [] };
+    moveEraserCursor(e);
+    eraserCursor.hidden = false;
+    eraseAlong(p, p);
+    trace(e, '→ erase');
+  }
+  function moveErase(e: PointerEvent): void {
+    if (!erase || e.pointerId !== erase.pointerId) return;
+    const events = typeof e.getCoalescedEvents === 'function' && e.getCoalescedEvents().length ? e.getCoalescedEvents() : [e];
+    for (const ce of events) {
+      const p = viewport.clientToContent(ce.clientX, ce.clientY);
+      eraseAlong(erase.last, p);
+      erase.last = p;
+    }
+    moveEraserCursor(e);
+  }
+  function endErase(): void {
+    if (!erase) return;
+    eraserCursor.hidden = true;
+    if (erase.removed.length) {
+      pushHistory({ type: 'erase', removed: erase.removed });
+      markStrokesChanged(true);
+    }
+    erase = null;
+  }
+  function setTool(t: 'pen' | 'eraser'): void {
+    tool = t;
+    eraserBtn.classList.toggle('active', t === 'eraser');
+    eraserBtn.setAttribute('aria-pressed', String(t === 'eraser'));
+    stage.classList.toggle('erasing', t === 'eraser');
   }
 
   // --- pointer input ----------------------------------------------------------
@@ -426,6 +570,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     if (s.points.length) {
       drawStrokeProgress(ctx, s, a.drawn, s.points.length, true, 0);
       strokes.push(s);
+      pushHistory({ type: 'add', stroke: s });
       markStrokesChanged(false);
     }
     if (e) trace(e, `✓ stroke #${strokes.length} pts=${s.points.length}`);
@@ -443,6 +588,17 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
     if (mode === 'arrange') {
       arrangeDown(e);
+      return;
+    }
+
+    if (tool === 'eraser') {
+      // Fingers still pan/pinch once a Pencil has been seen; otherwise a finger erases.
+      if (e.pointerType === 'touch' && (penMode || viewport.gesturing || erase)) {
+        viewport.pointerDown(e);
+        return;
+      }
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (!erase) startErase(e);
       return;
     }
 
@@ -493,6 +649,11 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       arrangeMove(e);
       return;
     }
+    if (erase) {
+      e.preventDefault();
+      moveErase(e);
+      return;
+    }
     if (!active || e.pointerId !== active.pointerId) return;
     e.preventDefault();
     const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
@@ -510,6 +671,10 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     }
     if (mode === 'arrange') {
       arrangeUp(e);
+      return;
+    }
+    if (erase && (e.pointerId === erase.pointerId || e.pointerType === 'pen')) {
+      endErase();
       return;
     }
     if (!active) {
@@ -648,6 +813,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     color = b.dataset.color!;
     selectIn(inks, b);
     setMode('write');
+    setTool('pen');
   });
   const brushes = $(root, '#brushes');
   brushes.addEventListener('click', (e) => {
@@ -656,17 +822,20 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     size = Number(b.dataset.size);
     selectIn(brushes, b);
     setMode('write');
+    setTool('pen');
   });
-  $(root, '#undo').addEventListener('click', () => {
-    if (!strokes.length) return;
-    strokes.pop();
-    render();
-    markStrokesChanged(true);
+  const undoBtn = $<HTMLButtonElement>(root, '#undo');
+  const eraserBtn = $<HTMLButtonElement>(root, '#eraser');
+  undoBtn.addEventListener('click', undo);
+  eraserBtn.addEventListener('click', () => {
+    setMode('write');
+    setTool(tool === 'eraser' ? 'pen' : 'eraser');
   });
+  updateUndo();
   $(root, '#clear').addEventListener('click', () => {
     if (!strokes.length) return;
-    if (!confirm('Clear everything you wrote on this card? Photos stay.')) return;
-    strokes.length = 0;
+    if (!confirm('Clear everything you wrote on this card? Photos stay — and you can undo this.')) return;
+    pushHistory({ type: 'clear', strokes: strokes.splice(0, strokes.length) });
     render();
     markStrokesChanged(true);
   });
