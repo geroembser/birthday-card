@@ -67,13 +67,38 @@ export function clearCanvas(ctx: CanvasRenderingContext2D): void {
  * Pressure → line width. The floor is deliberately high: a light Pencil touch
  * reports pressure near 0 and must still leave a visible mark.
  */
+/**
+ * Pressure → line width. The floor is deliberately high: a light Pencil touch
+ * reports pressure near 0 and must still leave a visible mark.
+ */
 function widthFor(size: number, pressure: number): number {
   return size * (0.5 + 0.8 * pressure);
 }
 
-/** A single tap: a pen dot the size of a normal line, whatever the (unreliable) tap pressure. */
-function dotRadius(size: number, pressure: number): number {
-  return Math.max(widthFor(size, pressure) / 2, size * 0.45);
+/**
+ * Per-point widths, smoothed causally (only past samples, so the value never
+ * changes once drawn) and rate-limited so pressure noise can't ripple the edge.
+ */
+const widthCache = new WeakMap<Stroke, number[]>();
+function smoothedWidths(stroke: Stroke): number[] {
+  let w = widthCache.get(stroke);
+  if (!w) {
+    w = [];
+    widthCache.set(stroke, w);
+  }
+  const pts = stroke.points;
+  if (w.length > pts.length) w.length = 0;
+  for (let i = w.length; i < pts.length; i++) {
+    const raw = widthFor(stroke.size, pts[i]!.p);
+    if (i === 0) {
+      w.push(raw);
+    } else {
+      const prev = w[i - 1]!;
+      const lim = stroke.size * 0.1;
+      w.push(prev + Math.max(-lim, Math.min(lim, (raw - prev) * 0.3)));
+    }
+  }
+  return w;
 }
 
 function mid(a: Point, b: Point): { x: number; y: number } {
@@ -87,33 +112,41 @@ export function unitCount(n: number, final: boolean): number {
   return n - 1 + (final ? 1 : 0);
 }
 
+const TAIL_TAPER = 0.45; // width at the very end of a stroke, relative to the last sample
+const SAMPLE_STEP = 2.2; // spread units between outline samples
+const OVERLAP = 0.7; // spread units each unit extends past its ends, hiding anti-aliasing seams
+
 /**
- * Draws unit `k` of a stroke, optionally only its first `frac` (0..1] so a pen
- * tip can sit part-way along it.
+ * Draws unit `k` of a stroke as a filled outline with continuously varying
+ * width, optionally only its first `frac` (0..1] so a pen tip can sit
+ * part-way along it. Units share exact boundary samples, so consecutive
+ * units tile seamlessly.
  */
 export function drawUnit(ctx: CanvasRenderingContext2D, stroke: Stroke, k: number, offsetX: number, frac = 1): void {
   const pts = stroke.points;
   const n = pts.length;
   if (n === 0 || k < 0) return;
-  ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
+  const w = smoothedWidths(stroke);
 
   if (n === 1) {
     const p0 = pts[0]!;
-    ctx.beginPath();
-    ctx.arc(p0.x + offsetX, p0.y, dotRadius(stroke.size, p0.p), 0, Math.PI * 2);
-    ctx.fill();
+    dot(ctx, p0.x + offsetX, p0.y, Math.max(w[0]! / 2, stroke.size * 0.45));
     return;
   }
 
+  // Quadratic a → b with control c, and widths at a, c, b.
   let ax: number, ay: number, cx: number, cy: number, bx: number, by: number;
-  let curved = false;
-  let pressure: number;
+  let wa: number, wc: number, wb: number;
+  let startCap = false;
+  let endCap = false;
   if (k === 0) {
     const p0 = pts[0]!;
     const m = mid(p0, pts[1]!);
-    ax = p0.x; ay = p0.y; bx = m.x; by = m.y; cx = ax; cy = ay;
-    pressure = p0.p;
+    ax = p0.x; ay = p0.y; bx = m.x; by = m.y;
+    wa = w[0]!; wb = (w[0]! + w[1]!) / 2;
+    cx = (ax + bx) / 2; cy = (ay + by) / 2; wc = (wa + wb) / 2;
+    startCap = true;
   } else if (k <= n - 2) {
     const prev = pts[k - 1]!;
     const cur = pts[k]!;
@@ -121,33 +154,83 @@ export function drawUnit(ctx: CanvasRenderingContext2D, stroke: Stroke, k: numbe
     const a = mid(prev, cur);
     const b = mid(cur, next);
     ax = a.x; ay = a.y; cx = cur.x; cy = cur.y; bx = b.x; by = b.y;
-    curved = true;
-    pressure = cur.p;
+    wa = (w[k - 1]! + w[k]!) / 2; wc = w[k]!; wb = (w[k]! + w[k + 1]!) / 2;
   } else if (k === n - 1) {
     const prev = pts[n - 2]!;
     const last = pts[n - 1]!;
     const a = mid(prev, last);
-    ax = a.x; ay = a.y; bx = last.x; by = last.y; cx = ax; cy = ay;
-    pressure = last.p;
+    ax = a.x; ay = a.y; bx = last.x; by = last.y;
+    wa = (w[n - 2]! + w[n - 1]!) / 2; wb = w[n - 1]! * TAIL_TAPER;
+    cx = (ax + bx) / 2; cy = (ay + by) / 2; wc = (wa + wb) / 2;
+    endCap = true;
   } else {
     return;
   }
 
-  if (frac < 1) {
-    // de Casteljau split at `frac`: keep the first part.
-    const f = Math.max(0, frac);
-    const q0x = ax + (cx - ax) * f, q0y = ay + (cy - ay) * f;
-    const q1x = cx + (bx - cx) * f, q1y = cy + (by - cy) * f;
-    bx = q0x + (q1x - q0x) * f; by = q0y + (q1y - q0y) * f;
-    cx = q0x; cy = q0y;
+  const f = Math.max(0, Math.min(1, frac));
+  const len = Math.hypot(cx - ax, cy - ay) + Math.hypot(bx - cx, by - cy);
+  const m = Math.max(1, Math.min(12, Math.round((len * f) / SAMPLE_STEP)));
+  const L: number[] = [];
+  const R: number[] = [];
+  let nx = 0;
+  let ny = 0;
+  let lastX = ax;
+  let lastY = ay;
+  let lastW = wa;
+  // Extend a little past both ends (along the tangent) so neighbouring units overlap.
+  const ext = len > 1e-6 ? Math.min(OVERLAP, len / 2) : 0;
+  const extStart = startCap ? 0 : ext;
+  const extEnd = endCap || f < 1 ? 0 : ext;
+  for (let i = -1; i <= m + 1; i++) {
+    if ((i === -1 && !extStart) || (i === m + 1 && !extEnd)) continue;
+    const t = (Math.max(0, Math.min(m, i)) / m) * f;
+    const u = 1 - t;
+    let x = u * u * ax + 2 * u * t * cx + t * t * bx;
+    let y = u * u * ay + 2 * u * t * cy + t * t * by;
+    const width = u * u * wa + 2 * u * t * wc + t * t * wb;
+    let dx = 2 * u * (cx - ax) + 2 * t * (bx - cx);
+    let dy = 2 * u * (cy - ay) + 2 * t * (by - cy);
+    let d = Math.hypot(dx, dy);
+    if (d < 1e-6) {
+      dx = bx - ax;
+      dy = by - ay;
+      d = Math.hypot(dx, dy);
+    }
+    if (d >= 1e-6) {
+      nx = -dy / d;
+      ny = dx / d;
+      if (i === -1) {
+        x -= (dx / d) * extStart;
+        y -= (dy / d) * extStart;
+      } else if (i === m + 1) {
+        x += (dx / d) * extEnd;
+        y += (dy / d) * extEnd;
+      }
+    }
+    const h = width / 2;
+    L.push(x + nx * h + offsetX, y + ny * h);
+    R.push(x - nx * h + offsetX, y - ny * h);
+    if (i <= m) {
+      lastX = x; lastY = y; lastW = width;
+    }
   }
 
-  ctx.lineWidth = widthFor(stroke.size, pressure);
   ctx.beginPath();
-  ctx.moveTo(ax + offsetX, ay);
-  if (curved) ctx.quadraticCurveTo(cx + offsetX, cy, bx + offsetX, by);
-  else ctx.lineTo(bx + offsetX, by);
-  ctx.stroke();
+  ctx.moveTo(L[0]!, L[1]!);
+  for (let i = 2; i < L.length; i += 2) ctx.lineTo(L[i]!, L[i + 1]!);
+  for (let i = R.length - 2; i >= 0; i -= 2) ctx.lineTo(R[i]!, R[i + 1]!);
+  ctx.closePath();
+  ctx.fill();
+
+  if (startCap) dot(ctx, ax + offsetX, ay, wa / 2);
+  if (endCap && f >= 1) dot(ctx, bx + offsetX, by, wb / 2);
+  if (f < 1) dot(ctx, lastX + offsetX, lastY, lastW / 2); // the pen tip
+}
+
+function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(0.1, r), 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /**

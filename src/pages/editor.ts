@@ -13,7 +13,8 @@ import { createDebugPanel } from '../lib/debug.ts';
 import { navigate, type Cleanup } from '../router.ts';
 
 const AUTOSAVE_DELAY = 1200;
-const MIN_POINT_DISTANCE = 1.2; // spread units; drops jitter without losing shape
+const MIN_POINT_DISTANCE = 2; // spread units; drops jitter without losing shape
+const POSITION_SMOOTHING = 0.7; // 1 = raw; lower = smoother, laggier
 const STAGE_PADDING = 14;
 
 type Mode = 'write' | 'arrange';
@@ -520,9 +521,12 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   }
 
   function addPoint(a: Active, e: { clientX: number; clientY: number } & Partial<PointerEvent>): void {
-    const { x, y } = viewport.clientToContent(e.clientX, e.clientY);
+    const raw = viewport.clientToContent(e.clientX, e.clientY);
     const pts = a.stroke.points;
     const last = pts[pts.length - 1];
+    // Light low-pass on position: takes the tremor out of 240 Hz samples without visible lag.
+    const x = last ? last.x + (raw.x - last.x) * POSITION_SMOOTHING : raw.x;
+    const y = last ? last.y + (raw.y - last.y) * POSITION_SMOOTHING : raw.y;
     if (last && Math.hypot(x - last.x, y - last.y) < MIN_POINT_DISTANCE) return;
     a.pressure = pressureOf(e as PointerEvent, a.pressure);
     const t = Math.max(a.lastT, nowT());
