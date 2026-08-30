@@ -5,6 +5,7 @@ import { $, escapeHtml, icons } from '../lib/dom.ts';
 import { clearCanvas, drawAll } from '../lib/ink.ts';
 import { playCard, type Page, type PageTargets, type Replay } from '../lib/replay.ts';
 import { getEditToken } from '../lib/storage.ts';
+import { seedColor } from '../lib/themes.ts';
 import { createViewport, type View, type Viewport } from '../lib/viewport.ts';
 import type { Cleanup } from '../router.ts';
 
@@ -35,6 +36,7 @@ export async function renderViewer(root: HTMLElement, id: string): Promise<Clean
   const view = document.createElement('div');
   view.className = 'viewer';
   view.dataset.theme = card.theme;
+  view.style.setProperty('--seed', seedColor(card.id));
   view.innerHTML = `
     <div class="viewer-stage"></div>
     <p class="tap-hint">Tap to open</p>
@@ -46,7 +48,7 @@ export async function renderViewer(root: HTMLElement, id: string): Promise<Clean
     </div>`;
   root.replaceChildren(view);
 
-  const card3d = createCard3D(card.theme, card.recipient);
+  const card3d = createCard3D(card.theme, card.recipient, card.id);
   const scene = card3d.el;
   $(view, '.viewer-stage').append(scene);
   card3d.setImages(card.images, (img) => imageUrl(card.id, img.id));

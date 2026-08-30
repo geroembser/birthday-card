@@ -5,6 +5,7 @@ import { $, escapeHtml, icons } from '../lib/dom.ts';
 import { prepareImage } from '../lib/images.ts';
 import { BRUSHES, INKS, clearCanvas, drawAll, drawStrokeProgress, prepareCanvas } from '../lib/ink.ts';
 import { qrSvg } from '../lib/qr.ts';
+import { seedColor } from '../lib/themes.ts';
 import { getEditToken, penSeen, setPenSeen } from '../lib/storage.ts';
 import { createViewport, type View } from '../lib/viewport.ts';
 import { createDebugPanel } from '../lib/debug.ts';
@@ -50,7 +51,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   const shareUrl = `${location.origin}/c/${card.id}`;
 
   root.innerHTML = `
-    <div class="editor">
+    <div class="editor" data-theme="${card.theme}" style="--seed:${seedColor(card.id)}">
       <header class="editor-bar">
         <a href="/" data-link class="btn ghost icon" aria-label="Home">${icons.home}</a>
         <div class="editor-title"><strong>${title}</strong><span class="editor-status" id="status">Saved</span></div>
@@ -106,7 +107,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
           <h2 class="display">Your card is ready</h2>
           <p class="muted">Anyone with this link can open it and watch your handwriting appear. Only this device can change it.</p>
           <div class="share-row">
-            <div class="qr" aria-label="QR code for the card link">${qrSvg(shareUrl)}</div>
+            <div class="qr" aria-label="QR code for the card link">${card.theme === 'circle' ? qrSvg(shareUrl, { style: 'dots', eyeColor: seedColor(card.id) }) : qrSvg(shareUrl)}</div>
             <div class="share-col">
               <div class="link-box"><span class="link-text">${shareUrl}</span><button type="button" class="btn small" id="copy">Copy</button></div>
               <p class="fineprint left">Point a phone camera at the code to open the card.</p>

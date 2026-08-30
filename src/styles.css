@@ -228,11 +228,17 @@ input {
 
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 640px) {
+  .theme-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 400px) {
   .theme-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -494,6 +500,76 @@ input {
   background-position: 0 0, 13cqw 17cqw;
 }
 
+/* Circle — after my.card: white, one bright colour, circles */
+.cover-art[data-theme='circle'] {
+  --cover-bg: #fff;
+  --cover-ink: #2b2b2b;
+  --orb: #389eff;
+  font-family: 'Nunito', var(--font-ui);
+}
+.cover-art[data-theme='circle']::after {
+  display: none;
+}
+.cover-art[data-theme='circle'] .cover-deco {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--orb) 26%, #fff) 0 1cqw, transparent 1.25cqw);
+  background-size: 8cqw 8cqw;
+  background-position: 4cqw 4cqw;
+  -webkit-mask: radial-gradient(circle at 50% 44%, transparent 0 44cqw, #000 62cqw);
+  mask: radial-gradient(circle at 50% 44%, transparent 0 44cqw, #000 62cqw);
+}
+.cover-art[data-theme='circle'] .orb-wrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46cqw;
+  height: 46cqw;
+  margin: 0 auto 4cqw;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--orb) 40%, #fff);
+}
+.cover-art[data-theme='circle'] .orb {
+  display: grid;
+  place-items: center;
+  width: 30cqw;
+  height: 30cqw;
+  border-radius: 50%;
+  background: var(--orb);
+  color: #fff;
+  font-family: 'Poiret One', var(--font-display);
+  font-size: 17cqw;
+  line-height: 1;
+  box-shadow: 0 10px 30px -10px color-mix(in srgb, var(--orb) 70%, transparent);
+}
+.cover-art[data-theme='circle'] .orb-empty {
+  box-shadow:
+    inset 0 0 0 3cqw var(--orb),
+    inset 0 0 0 4cqw #fff,
+    0 10px 30px -10px color-mix(in srgb, var(--orb) 70%, transparent);
+}
+.cover-art[data-theme='circle'] .cover-kicker {
+  font-family: 'Nunito', var(--font-ui);
+  font-style: normal;
+  font-weight: 300;
+  font-size: 7.5cqw;
+  color: #8a8a8a;
+}
+.cover-art[data-theme='circle'] .cover-title {
+  font-family: 'Poiret One', var(--font-display);
+  font-weight: 400;
+  font-size: 15cqw;
+  letter-spacing: 0.03em;
+  color: var(--orb);
+}
+.cover-art[data-theme='circle'] .cover-for {
+  font-family: 'Nunito', var(--font-ui);
+  font-weight: 300;
+  font-size: 6.5cqw;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 1;
+  color: #2b2b2b;
+}
+
 /* --- the 3D card ------------------------------------------------------------- */
 
 .scene {
@@ -666,6 +742,37 @@ input {
 
 .viewer[data-theme='botanical'] {
   background: linear-gradient(180deg, #eef3ea, #d9e5d5);
+}
+
+.viewer[data-theme='circle'] {
+  background: var(--seed, #389eff);
+  color: #fff;
+  --paper: #fff;
+  --line: rgba(255, 255, 255, 0.4);
+  --muted: rgba(255, 255, 255, 0.85);
+  font-family: 'Nunito', var(--font-ui);
+}
+
+.viewer[data-theme='circle'] .tap-hint {
+  font-family: 'Nunito', var(--font-ui);
+  font-style: normal;
+  font-weight: 300;
+}
+
+.viewer[data-theme='circle'] .btn.ghost,
+.viewer[data-theme='circle'] .viewer-footer .btn.ghost {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.viewer[data-theme='circle'] .btn:not(.ghost) {
+  background: #fff;
+  border-color: #fff;
+  color: #2b2b2b;
+}
+
+.editor[data-theme='circle'] {
+  --paper: #fff;
 }
 
 .viewer-stage {
