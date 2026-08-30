@@ -582,7 +582,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   // the touch events' default keeps Scribble out; buttons are exempt so taps click.
   const keepScribbleOut = (e: TouchEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
-    if (e.type === 'touchmove' || Array.from(e.changedTouches).some((t) => t.touchType === 'stylus')) e.preventDefault();
+    if (e.type === 'touchmove' || Array.from(e.changedTouches).some((t) => (t as Touch & { touchType?: string }).touchType === 'stylus')) e.preventDefault();
   };
   stage.addEventListener('touchstart', keepScribbleOut, { passive: false });
   stage.addEventListener('touchmove', keepScribbleOut, { passive: false });
