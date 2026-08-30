@@ -1,3 +1,5 @@
+import { text } from './lib/i18n.ts';
+
 export type Cleanup = () => void;
 
 export interface Route {
@@ -20,7 +22,7 @@ async function dispatch(): Promise<void> {
   const path = location.pathname;
   const route = routesRef.find((r) => r.pattern.test(path));
   if (!route) {
-    rootRef.innerHTML = `<main class="page-center"><h1 class="display">Lost?</h1><p><a data-link href="/">Go home</a></p></main>`;
+    rootRef.innerHTML = `<main class="page-center"><h1 class="display">${text.router.lost}</h1><p><a data-link href="/">${text.common.goHome}</a></p></main>`;
     return;
   }
   const match = path.match(route.pattern)!;

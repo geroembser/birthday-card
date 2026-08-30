@@ -13,6 +13,7 @@ import { getEditToken, penSeen, setPenSeen } from '../lib/storage.ts';
 import { createViewport, type View } from '../lib/viewport.ts';
 import { createDebugPanel } from '../lib/debug.ts';
 import { navigate, type Cleanup } from '../router.ts';
+import { text } from '../lib/i18n.ts';
 
 const AUTOSAVE_DELAY = 1200;
 const MIN_POINT_DISTANCE = 2; // spread units; drops jitter without losing shape
@@ -22,20 +23,20 @@ const STAGE_PADDING = 14;
 type Mode = 'write' | 'arrange';
 
 export async function renderEditor(root: HTMLElement, id: string): Promise<Cleanup | void> {
-  document.title = 'Write your card · birthday.card';
+  document.title = text.editor.documentTitle;
   const token = getEditToken(id);
 
   if (!token) {
     root.innerHTML = `
       <main class="page-center">
-        <h1 class="display">This card lives on another device</h1>
-        <p class="lead">Cards can only be edited where they were created. You can still open it.</p>
-        <p><a class="btn primary" data-link href="/c/${id}">Open the card</a> <a class="btn ghost" data-link href="/">Make your own</a></p>
+        <h1 class="display">${text.editor.otherDeviceTitle}</h1>
+        <p class="lead">${text.editor.otherDeviceBody}</p>
+        <p><a class="btn primary" data-link href="/c/${id}">${text.editor.openCard}</a> <a class="btn ghost" data-link href="/">${text.editor.makeOwn}</a></p>
       </main>`;
     return;
   }
 
-  root.innerHTML = `<main class="page-center"><p class="muted">Loading…</p></main>`;
+  root.innerHTML = `<main class="page-center"><p class="muted">${text.common.loading}</p></main>`;
   let card: CardData;
   try {
     card = await getCard(id);
@@ -43,25 +44,25 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     const notFound = err instanceof ApiError && err.status === 404;
     root.innerHTML = `
       <main class="page-center">
-        <h1 class="display">${notFound ? "This card doesn't exist" : "Couldn't load the card"}</h1>
-        <p><a class="btn primary" data-link href="/">Go home</a></p>
+        <h1 class="display">${notFound ? text.editor.cardMissing : text.editor.loadFailed}</h1>
+        <p><a class="btn primary" data-link href="/">${text.common.goHome}</a></p>
       </main>`;
     return;
   }
   card.images ??= [];
   const editToken: string = token;
 
-  const title = card.recipient ? `Card for ${escapeHtml(card.recipient)}` : 'Your card';
+  const title = card.recipient ? text.editor.cardFor(escapeHtml(card.recipient)) : text.editor.yourCard;
   const shareUrl = `${location.origin}/c/${card.id}`;
 
   root.innerHTML = `
     <div class="editor" data-theme="${card.theme}" style="--seed:${seedColor(card.id)}">
       <header class="editor-bar">
-        <a href="/" data-link class="brand-link" aria-label="birthday.card home">${logoHtml('brand-sm')}</a>
-        <div class="editor-title"><strong>${title}</strong><span class="editor-status" id="status">Saved</span></div>
+        <a href="/" data-link class="brand-link" aria-label="${text.common.brandHomeLabel}">${logoHtml('brand-sm')}</a>
+        <div class="editor-title"><strong>${title}</strong><span class="editor-status" id="status">${text.common.saved}</span></div>
         <div class="editor-actions">
-          <button class="btn ghost" id="preview" type="button">Preview</button>
-          <button class="btn primary" id="done" type="button">Done</button>
+          <button class="btn ghost" id="preview" type="button">${text.editor.preview}</button>
+          <button class="btn primary" id="done" type="button">${text.common.done}</button>
         </div>
       </header>
 
@@ -69,60 +70,60 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
         <div class="paper" id="paper">
           <div class="paper-images" id="paper-images"></div>
           <div class="fold"></div>
-          <p class="spread-hint" id="hint">Write your message here.<br /><small>Left page, right page — it’s all yours. Pinch to zoom.</small></p>
+          <p class="spread-hint" id="hint">${text.editor.writeHint}<br /><small>${text.editor.writeHintDetail}</small></p>
         </div>
-        <canvas id="ink" aria-label="Card writing surface"></canvas>
+        <canvas id="ink" aria-label="${text.editor.writingSurface}"></canvas>
         <div class="arrange-layer" id="arrange-layer" hidden>
           <div class="img-frame" id="img-frame">
-            <button type="button" class="img-delete" id="img-delete" aria-label="Remove photo">${icons.trash}</button>
+            <button type="button" class="img-delete" id="img-delete" aria-label="${text.editor.removePhoto}">${icons.trash}</button>
             <div class="img-handle" aria-hidden="true"></div>
           </div>
         </div>
         <div class="arrange-bar" id="arrange-bar" hidden>
-          <span>Drag a photo to move it, pull the corner to resize.</span>
-          <button type="button" class="btn small" id="arrange-done">${icons.check} Done</button>
+          <span>${text.editor.arrangeInstruction}</span>
+          <button type="button" class="btn small" id="arrange-done">${icons.check} ${text.common.done}</button>
         </div>
         <div class="zoom-badge" id="zoom-badge" hidden></div>
         <div class="eraser-cursor" id="eraser-cursor" hidden></div>
-        <p class="rotate-hint">Turn your device sideways for a bigger card.</p>
+        <p class="rotate-hint">${text.editor.rotateHint}</p>
       </div>
 
       <footer class="toolbar">
-        <div class="tool-group" id="inks" role="radiogroup" aria-label="Ink colour">
-          ${INKS.map((ink, i) => `<button type="button" class="swatch ${i === 0 ? 'active' : ''}" data-color="${ink.color}" style="--c:${ink.color}" aria-label="${ink.name}" aria-pressed="${i === 0}"></button>`).join('')}
+        <div class="tool-group" id="inks" role="radiogroup" aria-label="${text.editor.inkColour}">
+          ${INKS.map((ink, i) => `<button type="button" class="swatch ${i === 0 ? 'active' : ''}" data-color="${ink.color}" style="--c:${ink.color}" aria-label="${text.inks[ink.id]}" aria-pressed="${i === 0}"></button>`).join('')}
         </div>
-        <div class="tool-group" id="brushes" role="radiogroup" aria-label="Pen size">
-          ${BRUSHES.map((b, i) => `<button type="button" class="brush ${i === 1 ? 'active' : ''}" data-size="${b.size}" aria-label="${b.name}" aria-pressed="${i === 1}"><span style="--s:${6 + b.size}px"></span></button>`).join('')}
+        <div class="tool-group" id="brushes" role="radiogroup" aria-label="${text.editor.penSize}">
+          ${BRUSHES.map((b, i) => `<button type="button" class="brush ${i === 1 ? 'active' : ''}" data-size="${b.size}" aria-label="${text.brushes[b.id]}" aria-pressed="${i === 1}"><span style="--s:${6 + b.size}px"></span></button>`).join('')}
         </div>
         <div class="tool-group">
-          <button type="button" class="tool" id="photo" aria-label="Photos">${icons.photo}</button>
-          <button type="button" class="tool" id="eraser" aria-label="Eraser" aria-pressed="false">${icons.eraser}</button>
-          <button type="button" class="tool" id="undo" aria-label="Undo">${icons.undo}</button>
-          <button type="button" class="tool" id="clear" aria-label="Clear the card">${icons.trash}</button>
+          <button type="button" class="tool" id="photo" aria-label="${text.editor.photos}">${icons.photo}</button>
+          <button type="button" class="tool" id="eraser" aria-label="${text.editor.eraser}" aria-pressed="false">${icons.eraser}</button>
+          <button type="button" class="tool" id="undo" aria-label="${text.editor.undo}">${icons.undo}</button>
+          <button type="button" class="tool" id="clear" aria-label="${text.editor.clearCard}">${icons.trash}</button>
         </div>
         <div class="popover" id="photo-menu" hidden>
-          <button type="button" id="add-photo">${icons.photo} Add a photo</button>
-          <button type="button" id="arrange-photos">${icons.pencil} Arrange photos</button>
+          <button type="button" id="add-photo">${icons.photo} ${text.editor.addPhoto}</button>
+          <button type="button" id="arrange-photos">${icons.pencil} ${text.editor.arrangePhotos}</button>
         </div>
       </footer>
       <input type="file" id="file" accept="image/*" hidden />
 
       <div class="modal" id="share" hidden>
         <div class="modal-card">
-          <p class="eyebrow">Ready to send</p>
-          <h2 class="display">Your card is ready</h2>
-          <p class="muted">Anyone with this link can open it and watch your handwriting appear. Only this device can change it.</p>
+          <p class="eyebrow">${text.editor.readyEyebrow}</p>
+          <h2 class="display">${text.editor.readyTitle}</h2>
+          <p class="muted">${text.editor.readyBody}</p>
           <div class="share-row">
-            <div class="qr" id="qr" aria-label="QR code for the card link">${qrSvg(shareUrl, { style: 'dots', eyeColor: CIRCLE_BLUE })}</div>
+            <div class="qr" id="qr" aria-label="${text.editor.qrLabel}">${qrSvg(shareUrl, { style: 'dots', eyeColor: CIRCLE_BLUE })}</div>
             <div class="share-col">
-              <div class="link-box"><span class="link-text">${shareUrl}</span><button type="button" class="btn small" id="copy">Copy</button></div>
-              <p class="fineprint left">Point a phone camera at the code to open the card.</p>
+              <div class="link-box"><span class="link-text">${shareUrl}</span><button type="button" class="btn small" id="copy">${text.editor.copy}</button></div>
+              <p class="fineprint left">${text.editor.qrInstruction}</p>
             </div>
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn primary" id="native-share" hidden>Share…</button>
-            <a class="btn" data-link href="/c/${card.id}">Open the card</a>
-            <button type="button" class="btn ghost" id="close-share">Keep writing</button>
+            <button type="button" class="btn primary" id="native-share" hidden>${text.editor.share}</button>
+            <a class="btn" data-link href="/c/${card.id}">${text.editor.openCard}</a>
+            <button type="button" class="btn ghost" id="close-share">${text.editor.keepWriting}</button>
           </div>
         </div>
       </div>
@@ -297,10 +298,10 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
   async function addPhoto(file: File): Promise<void> {
     if (images.length >= LIMITS.images) {
-      setStatus(`At most ${LIMITS.images} photos`, 'error');
+      setStatus(text.editor.maxPhotos(LIMITS.images), 'error');
       return;
     }
-    setStatus('Adding photo…', 'busy');
+    setStatus(text.editor.addingPhoto, 'busy');
     try {
       const prep = await prepareImage(file);
       // Place it on the emptier page, comfortably sized.
@@ -325,9 +326,9 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       renderImages();
       setMode('arrange');
       select(res.image);
-      setStatus('Saved');
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'Could not add photo', 'error');
+      setStatus(text.common.saved);
+    } catch {
+      setStatus(text.editor.addPhotoError, 'error');
     }
   }
 
@@ -338,12 +339,12 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     const idx = images.indexOf(img);
     if (idx >= 0) images.splice(idx, 1);
     renderImages();
-    setStatus('Saving…', 'busy');
+    setStatus(text.editor.saving, 'busy');
     try {
       await withSaveLock(() => deleteImage(card.id, editToken, img.id));
-      setStatus('Saved');
+      setStatus(text.common.saved);
     } catch {
-      setStatus('Couldn’t remove photo', 'error');
+      setStatus(text.editor.removePhotoError, 'error');
     }
   }
 
@@ -840,7 +841,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   updateUndo();
   $(root, '#clear').addEventListener('click', () => {
     if (!strokes.length) return;
-    if (!confirm('Clear everything you wrote on this card? Photos stay — and you can undo this.')) return;
+    if (!confirm(text.editor.clearConfirm)) return;
     pushHistory({ type: 'clear', strokes: strokes.splice(0, strokes.length) });
     render();
     markStrokesChanged(true);
@@ -895,12 +896,12 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
   function markStrokesChanged(full: boolean): void {
     if (full) needFullStrokes = true;
-    setStatus('Unsaved', 'busy');
+    setStatus(text.editor.unsaved, 'busy');
     scheduleSave();
   }
   function markImagesChanged(): void {
     imagesDirty = true;
-    setStatus('Unsaved', 'busy');
+    setStatus(text.editor.unsaved, 'busy');
     scheduleSave();
   }
   function scheduleSave(delay = AUTOSAVE_DELAY): void {
@@ -915,7 +916,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       return;
     }
     await withSaveLock(async () => {
-      setStatus('Saving…', 'busy');
+      setStatus(text.editor.saving, 'busy');
       try {
         if (needFullStrokes || strokes.length < serverStrokeCount) {
           const snapshot = strokes.slice();
@@ -937,9 +938,9 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
           imagesDirty = false;
           await updateCard(card.id, editToken, { images: images.slice() });
         }
-        setStatus(isDirty() ? 'Unsaved' : 'Saved', isDirty() ? 'busy' : '');
+        setStatus(isDirty() ? text.editor.unsaved : text.common.saved, isDirty() ? 'busy' : '');
       } catch (err) {
-        setStatus(err instanceof ApiError && err.status === 403 ? 'Not allowed to edit' : 'Couldn’t save — retrying', 'error');
+        setStatus(err instanceof ApiError && err.status === 403 ? text.editor.editForbidden : text.editor.saveRetry, 'error');
         scheduleSave(4000);
         return;
       }
@@ -984,10 +985,10 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   copy.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
-      copy.textContent = 'Copied';
-      setTimeout(() => (copy.textContent = 'Copy'), 1500);
+      copy.textContent = text.editor.copied;
+      setTimeout(() => (copy.textContent = text.editor.copy), 1500);
     } catch {
-      prompt('Copy this link', shareUrl);
+      prompt(text.editor.copyPrompt, shareUrl);
     }
   });
   const native = $<HTMLButtonElement>(root, '#native-share');
@@ -995,7 +996,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     native.hidden = false;
     native.addEventListener('click', () => {
       void navigator
-        .share({ title: card.recipient ? `A birthday card for ${card.recipient}` : 'A birthday card', url: shareUrl })
+        .share({ title: card.recipient ? text.editor.shareTitle(card.recipient) : text.editor.shareTitleGeneric, url: shareUrl })
         .catch(() => {});
     });
   }

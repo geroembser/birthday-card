@@ -1,5 +1,7 @@
 /** On-screen pointer-event trace for the editor (open /edit/:id?debug=1). */
 
+import { text } from './i18n.ts';
+
 export interface DebugPanel {
   log(message: string): void;
   destroy(): void;
@@ -8,7 +10,7 @@ export interface DebugPanel {
 export function createDebugPanel(host: HTMLElement): DebugPanel {
   const panel = document.createElement('div');
   panel.className = 'debug-panel';
-  panel.innerHTML = `<div class="debug-tools"><button type="button" data-act="copy">Copy log</button><button type="button" data-act="clear">Clear</button><span class="debug-count"></span></div><pre class="debug-log"></pre>`;
+  panel.innerHTML = `<div class="debug-tools"><button type="button" data-act="copy">${text.debug.copyLog}</button><button type="button" data-act="clear">${text.debug.clear}</button><span class="debug-count"></span></div><pre class="debug-log"></pre>`;
   host.append(panel);
   const pre = panel.querySelector<HTMLElement>('.debug-log')!;
   const count = panel.querySelector<HTMLElement>('.debug-count')!;
@@ -20,7 +22,7 @@ export function createDebugPanel(host: HTMLElement): DebugPanel {
   const render = () => {
     raf = 0;
     pre.textContent = lines.slice(-40).join('\n');
-    count.textContent = `${lines.length} events · ${navigator.userAgent.match(/(iPad|iPhone|Macintosh|Android|Windows)[^;)]*/)?.[0] ?? ''}`;
+    count.textContent = `${lines.length} ${text.debug.events} · ${navigator.userAgent.match(/(iPad|iPhone|Macintosh|Android|Windows)[^;)]*/)?.[0] ?? ''}`;
   };
 
   panel.querySelector('.debug-tools')!.addEventListener('click', (e) => {
@@ -29,8 +31,8 @@ export function createDebugPanel(host: HTMLElement): DebugPanel {
       lines.length = 0;
       render();
     } else if (act === 'copy') {
-      const text = `${navigator.userAgent}\n${lines.join('\n')}`;
-      navigator.clipboard.writeText(text).catch(() => prompt('Copy the log', text));
+      const logText = `${navigator.userAgent}\n${lines.join('\n')}`;
+      navigator.clipboard.writeText(logText).catch(() => prompt(text.debug.copyPrompt, logText));
     }
   });
 

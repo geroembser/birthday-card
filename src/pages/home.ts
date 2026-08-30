@@ -7,6 +7,7 @@ import { THEMES, themeById } from '../lib/themes.ts';
 import { navigate } from '../router.ts';
 import { renderCover } from '../components/cover.ts';
 import { logoHtml } from '../components/logo.ts';
+import { formatDate, text } from '../lib/i18n.ts';
 
 export function renderHome(root: HTMLElement): void {
   document.title = 'birthday.card';
@@ -16,34 +17,33 @@ export function renderHome(root: HTMLElement): void {
     <main class="home">
       <section class="hero">
         <p class="hero-brand">${logoHtml('brand-lg')}</p>
-        <h1 class="display">Handwrite a card.<br /><em>Share a link.</em></h1>
+        <h1 class="display">${text.home.heroLine1}<br /><em>${text.home.heroLine2}</em></h1>
         <p class="lead">
-          Pick up your Apple Pencil and write a birthday message the way you would on paper.
-          When they open the link, the card unfolds and your handwriting appears, stroke by stroke.
+          ${text.home.intro}
         </p>
       </section>
 
       <form class="create" id="create">
         <label class="field">
-          <span class="field-label">Who is it for?</span>
+          <span class="field-label">${text.home.recipientLabel}</span>
           <input name="recipient" type="text" autocomplete="off" maxlength="${LIMITS.recipientLength}"
-                 placeholder="Their name (optional)" enterkeyhint="done" />
+                 placeholder="${text.home.recipientPlaceholder}" enterkeyhint="done" />
         </label>
 
         <fieldset class="themes">
-          <legend class="field-label">Choose a cover</legend>
+          <legend class="field-label">${text.home.chooseCover}</legend>
           <div class="theme-grid" id="themes"></div>
         </fieldset>
 
         <p class="form-error" id="error" hidden></p>
-        <button class="btn primary big" type="submit" id="submit">Create card</button>
-        <p class="fineprint">No account needed. Only this device can edit the card; anyone with the link can open it.</p>
+        <button class="btn primary big" type="submit" id="submit">${text.home.createCard}</button>
+        <p class="fineprint">${text.home.noAccount}</p>
       </form>
 
       ${
         mine.length
           ? `<section class="mine">
-              <h2 class="section-title">Your cards</h2>
+              <h2 class="section-title">${text.home.yourCards}</h2>
               <ul class="mine-list">
                 ${mine
                   .map(
@@ -51,12 +51,12 @@ export function renderHome(root: HTMLElement): void {
                   <li class="mine-item">
                     <div class="mine-cover" data-theme="${c.theme}"></div>
                     <div class="mine-meta">
-                      <strong>${c.recipient ? `For ${escapeHtml(c.recipient)}` : 'Untitled card'}</strong>
-                      <span>${themeById(c.theme).name} · ${new Date(c.createdAt).toLocaleDateString()}</span>
+                      <strong>${c.recipient ? text.home.cardFor(escapeHtml(c.recipient)) : text.home.untitledCard}</strong>
+                      <span>${text.themes[themeById(c.theme).id].name} · ${formatDate(c.createdAt)}</span>
                     </div>
                     <div class="mine-actions">
-                      <a class="btn ghost small" data-link href="/edit/${c.id}">Edit</a>
-                      <a class="btn small" data-link href="/c/${c.id}">Open</a>
+                      <a class="btn ghost small" data-link href="/edit/${c.id}">${text.common.edit}</a>
+                      <a class="btn small" data-link href="/c/${c.id}">${text.home.open}</a>
                     </div>
                   </li>`,
                   )
@@ -68,9 +68,9 @@ export function renderHome(root: HTMLElement): void {
 
       <footer class="home-footer">
         ${logoHtml('brand-sm')}
-        <span>Made for iPad and Apple Pencil, works anywhere with a browser.</span>
+        <span>${text.home.madeFor}</span>
         <a class="home-source" href="https://github.com/geroembser/birthday-card" target="_blank" rel="noreferrer">
-          View the code on GitHub <span aria-hidden="true">↗</span>
+          ${text.home.viewCode} <span aria-hidden="true">↗</span>
         </a>
       </footer>
     </main>`;
@@ -79,13 +79,14 @@ export function renderHome(root: HTMLElement): void {
   const grid = $(root, '#themes');
   const recipientInput = $<HTMLInputElement>(root, 'input[name=recipient]');
   THEMES.forEach((t, i) => {
+    const themeText = text.themes[t.id];
     const label = document.createElement('label');
     label.className = 'theme-option';
     label.innerHTML = `
       <input type="radio" name="theme" value="${t.id}" ${i === 0 ? 'checked' : ''} />
       <span class="cover-frame"></span>
-      <span class="theme-name">${t.name}</span>
-      <span class="theme-blurb">${t.blurb}</span>`;
+      <span class="theme-name">${themeText.name}</span>
+      <span class="theme-blurb">${themeText.blurb}</span>`;
     $(label, '.cover-frame').append(renderCover(t.id, ''));
     grid.append(label);
   });
@@ -114,17 +115,17 @@ export function renderHome(root: HTMLElement): void {
     const theme = String(data.get('theme') ?? 'confetti') as ThemeId;
     const recipient = String(data.get('recipient') ?? '').trim();
     submit.disabled = true;
-    submit.textContent = 'Creating…';
+    submit.textContent = text.home.creating;
     error.hidden = true;
     try {
       const { card, editToken } = await createCard({ theme, recipient });
       rememberCard({ id: card.id, recipient: card.recipient, theme: card.theme, createdAt: card.createdAt }, editToken);
       navigate(`/edit/${card.id}`);
-    } catch (err) {
-      error.textContent = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+    } catch {
+      error.textContent = text.home.createError;
       error.hidden = false;
       submit.disabled = false;
-      submit.textContent = 'Create card';
+      submit.textContent = text.home.createCard;
     }
   });
 }

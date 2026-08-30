@@ -9,12 +9,14 @@ import { seedColor } from '../lib/themes.ts';
 import { logoHtml } from '../components/logo.ts';
 import { createViewport, type View, type Viewport } from '../lib/viewport.ts';
 import type { Cleanup } from '../router.ts';
+import { text } from '../lib/i18n.ts';
 
 /** Below this rendered page width the replay zooms in on the page being written. */
 const AUTO_FOCUS_PAGE_WIDTH = 420;
 
 export async function renderViewer(root: HTMLElement, id: string): Promise<Cleanup | void> {
-  root.innerHTML = `<main class="page-center"><p class="muted">Loading…</p></main>`;
+  document.title = text.viewer.documentTitleGeneric;
+  root.innerHTML = `<main class="page-center"><p class="muted">${text.common.loading}</p></main>`;
   let card: CardData;
   try {
     card = await getCard(id);
@@ -22,15 +24,15 @@ export async function renderViewer(root: HTMLElement, id: string): Promise<Clean
     const notFound = err instanceof ApiError && err.status === 404;
     root.innerHTML = `
       <main class="page-center">
-        <h1 class="display">${notFound ? 'This card doesn’t exist' : 'Couldn’t load the card'}</h1>
-        <p class="lead">${notFound ? 'Check the link you were sent — or make a card of your own.' : 'Please try again in a moment.'}</p>
-        <p><a class="btn primary" data-link href="/">Make a card</a></p>
+        <h1 class="display">${notFound ? text.viewer.cardMissing : text.viewer.loadFailed}</h1>
+        <p class="lead">${notFound ? text.viewer.badLink : text.viewer.retry}</p>
+        <p><a class="btn primary" data-link href="/">${text.viewer.makeCard}</a></p>
       </main>`;
     return;
   }
   card.images ??= [];
 
-  document.title = card.recipient ? `A birthday card for ${card.recipient}` : 'A birthday card';
+  document.title = card.recipient ? text.viewer.documentTitle(card.recipient) : text.viewer.documentTitleGeneric;
   const isOwner = Boolean(getEditToken(card.id));
   const hasContent = card.strokes.length > 0 || card.images.length > 0;
 
@@ -40,13 +42,13 @@ export async function renderViewer(root: HTMLElement, id: string): Promise<Clean
   view.style.setProperty('--seed', seedColor(card.id));
   view.innerHTML = `
     <div class="viewer-stage"></div>
-    <p class="tap-hint">Tap to open</p>
-    <p class="skip-hint" hidden>Tap to skip</p>
+    <p class="tap-hint">${text.viewer.tapToOpen}</p>
+    <p class="skip-hint" hidden>${text.viewer.tapToSkip}</p>
     <div class="viewer-footer" hidden>
-      <button type="button" class="btn ghost small" id="replay">${icons.replay} Watch again</button>
-      ${isOwner ? `<a class="btn ghost small" data-link href="/edit/${card.id}">${icons.pencil} Edit</a>` : ''}
-      <a class="btn small" data-link href="/">Make your own card</a>
-      <a class="brand-link viewer-brand" data-link href="/" aria-label="birthday.card home">${logoHtml('brand-sm')}</a>
+      <button type="button" class="btn ghost small" id="replay">${icons.replay} ${text.viewer.watchAgain}</button>
+      ${isOwner ? `<a class="btn ghost small" data-link href="/edit/${card.id}">${icons.pencil} ${text.common.edit}</a>` : ''}
+      <a class="btn small" data-link href="/">${text.viewer.makeOwn}</a>
+      <a class="brand-link viewer-brand" data-link href="/" aria-label="${text.common.brandHomeLabel}">${logoHtml('brand-sm')}</a>
     </div>`;
   root.replaceChildren(view);
 
@@ -160,8 +162,10 @@ export async function renderViewer(root: HTMLElement, id: string): Promise<Clean
       const empty = document.createElement('p');
       empty.className = 'empty-note';
       empty.innerHTML = isOwner
-        ? `Nothing written yet — <a data-link href="/edit/${card.id}">write your message</a>.`
-        : `${card.recipient ? escapeHtml(card.recipient) + ', this' : 'This'} card is still blank.`;
+        ? `${text.viewer.emptyOwnerBeforeLink}<a data-link href="/edit/${card.id}">${text.viewer.emptyOwnerLink}</a>.`
+        : card.recipient
+          ? text.viewer.emptyFor(escapeHtml(card.recipient))
+          : text.viewer.emptyGeneric;
       view.append(empty);
       finished = true;
       footer.hidden = false;

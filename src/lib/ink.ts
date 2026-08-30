@@ -8,18 +8,18 @@ import type { Point, Stroke } from '../../shared/types.ts';
  */
 
 export const INKS = [
-  { id: 'ink', name: 'Ink', color: '#1f1a17' },
-  { id: 'navy', name: 'Navy', color: '#22407a' },
-  { id: 'red', name: 'Cherry', color: '#c9333a' },
-  { id: 'green', name: 'Forest', color: '#2f6b4a' },
-  { id: 'gold', name: 'Gold', color: '#b8860b' },
-  { id: 'violet', name: 'Violet', color: '#6b3fa0' },
+  { id: 'ink', color: '#1f1a17' },
+  { id: 'navy', color: '#22407a' },
+  { id: 'red', color: '#c9333a' },
+  { id: 'green', color: '#2f6b4a' },
+  { id: 'gold', color: '#b8860b' },
+  { id: 'violet', color: '#6b3fa0' },
 ] as const;
 
 export const BRUSHES = [
-  { id: 'fine', name: 'Fine', size: 5 },
-  { id: 'medium', name: 'Medium', size: 8 },
-  { id: 'bold', name: 'Bold', size: 13 },
+  { id: 'fine', size: 5 },
+  { id: 'medium', size: 8 },
+  { id: 'bold', size: 13 },
 ] as const;
 
 /** Largest backing store we allow per canvas (device pixels). */

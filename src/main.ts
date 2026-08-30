@@ -3,8 +3,11 @@ import { startRouter } from './router.ts';
 import { renderHome } from './pages/home.ts';
 import { renderEditor } from './pages/editor.ts';
 import { renderViewer } from './pages/viewer.ts';
+import { initializeI18n } from './lib/i18n.ts';
 
 const app = document.getElementById('app')!;
+
+initializeI18n();
 
 startRouter(app, [
   { pattern: /^\/$/, render: (root) => renderHome(root) },
