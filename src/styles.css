@@ -422,6 +422,18 @@ input {
   color: var(--ink);
 }
 
+.home-source {
+  color: var(--ink);
+  font-weight: 500;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(31, 26, 23, 0.28);
+  transition: text-decoration-color 0.15s;
+}
+
+.home-source:hover {
+  text-decoration-color: currentColor;
+}
+
 /* --- cover art --------------------------------------------------------------- */
 
 .cover-art {

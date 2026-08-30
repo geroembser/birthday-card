@@ -66,7 +66,13 @@ export function renderHome(root: HTMLElement): void {
           : ''
       }
 
-      <footer class="home-footer">${logoHtml('brand-sm')}<span>Made for iPad and Apple Pencil, works anywhere with a browser.</span></footer>
+      <footer class="home-footer">
+        ${logoHtml('brand-sm')}
+        <span>Made for iPad and Apple Pencil, works anywhere with a browser.</span>
+        <a class="home-source" href="https://github.com/geroembser/birthday-card" target="_blank" rel="noreferrer">
+          View the code on GitHub <span aria-hidden="true">↗</span>
+        </a>
+      </footer>
     </main>`;
 
   // Theme picker
