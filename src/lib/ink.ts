@@ -3,8 +3,9 @@ import type { Point, Stroke } from '../../shared/types.ts';
 /**
  * Ink rendering. A stroke is a chain of drawable "units": a start cap, one
  * quadratic curve per interior sample (through midpoints, control = sample)
- * and a tail. Units can be drawn incrementally and partially, which lets the
- * editor draw live, and the viewer replay with a moving pen tip.
+ * and a tail. Each unit is made from overlapping native canvas curves so the
+ * browser antialiases tight handwriting without exposing polygon edges. Units
+ * can still be drawn incrementally and partially for live ink and replay.
  */
 
 export const INKS = [
@@ -27,7 +28,8 @@ const MAX_CANVAS_PIXELS = 3_500_000;
 
 /**
  * Sizes a canvas for its CSS box at device resolution (times `pixelScale`, for
- * content that will be zoomed) and maps `logicalW x logicalH` onto it.
+ * supersampling or zoom), within `maxPixels`, and maps `logicalW x logicalH`
+ * onto it.
  */
 export function prepareCanvas(
   canvas: HTMLCanvasElement,
@@ -36,10 +38,11 @@ export function prepareCanvas(
   cssW: number,
   cssH: number,
   pixelScale = 1,
+  maxPixels = MAX_CANVAS_PIXELS,
 ): CanvasRenderingContext2D {
   let scale = Math.min(window.devicePixelRatio || 1, 3) * pixelScale;
   const px = cssW * cssH * scale * scale;
-  if (px > MAX_CANVAS_PIXELS) scale *= Math.sqrt(MAX_CANVAS_PIXELS / px);
+  if (px > maxPixels) scale *= Math.sqrt(maxPixels / px);
   const w = Math.max(1, Math.round(cssW * scale));
   const h = Math.max(1, Math.round(cssH * scale));
   if (canvas.width !== w || canvas.height !== h) {
@@ -63,10 +66,6 @@ export function clearCanvas(ctx: CanvasRenderingContext2D): void {
   ctx.restore();
 }
 
-/**
- * Pressure → line width. The floor is deliberately high: a light Pencil touch
- * reports pressure near 0 and must still leave a visible mark.
- */
 /**
  * Pressure → line width. The floor is deliberately high: a light Pencil touch
  * reports pressure near 0 and must still leave a visible mark.
@@ -113,20 +112,34 @@ export function unitCount(n: number, final: boolean): number {
 }
 
 const TAIL_TAPER = 0.45; // width at the very end of a stroke, relative to the last sample
-const SAMPLE_STEP = 2.2; // spread units between outline samples
-const OVERLAP = 0.7; // spread units each unit extends past its ends, hiding anti-aliasing seams
+const WIDTH_STEP = 0.06; // maximum width change per native curve, relative to brush size
+const MAX_WIDTH_SEGMENTS = 8;
+
+function quadAt(a: number, c: number, b: number, t: number): number {
+  const u = 1 - t;
+  return u * u * a + 2 * u * t * c + t * t * b;
+}
+
+function quadDerivativeAt(a: number, c: number, b: number, t: number): number {
+  return 2 * ((1 - t) * (c - a) + t * (b - c));
+}
 
 /**
- * Draws unit `k` of a stroke as a filled outline with continuously varying
- * width, optionally only its first `frac` (0..1] so a pen tip can sit
- * part-way along it. Units share exact boundary samples, so consecutive
- * units tile seamlessly.
+ * Draws unit `k` of a stroke with a continuously varying width, optionally
+ * only through `frac` (0..1] so a pen tip can sit part-way along it.
+ *
+ * Canvas cannot vary line width within one path. Splitting only when the
+ * pressure-derived width changes keeps the centreline as true quadratic
+ * curves, while round, overlapping caps make the pieces read as one stroke.
  */
 export function drawUnit(ctx: CanvasRenderingContext2D, stroke: Stroke, k: number, offsetX: number, frac = 1): void {
   const pts = stroke.points;
   const n = pts.length;
   if (n === 0 || k < 0) return;
+  ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   const w = smoothedWidths(stroke);
 
   if (n === 1) {
@@ -168,63 +181,40 @@ export function drawUnit(ctx: CanvasRenderingContext2D, stroke: Stroke, k: numbe
   }
 
   const f = Math.max(0, Math.min(1, frac));
-  const len = Math.hypot(cx - ax, cy - ay) + Math.hypot(bx - cx, by - cy);
-  const m = Math.max(1, Math.min(12, Math.round((len * f) / SAMPLE_STEP)));
-  const L: number[] = [];
-  const R: number[] = [];
-  let nx = 0;
-  let ny = 0;
-  let lastX = ax;
-  let lastY = ay;
-  let lastW = wa;
-  // Extend a little past both ends (along the tangent) so neighbouring units overlap.
-  const ext = len > 1e-6 ? Math.min(OVERLAP, len / 2) : 0;
-  const extStart = startCap ? 0 : ext;
-  const extEnd = endCap || f < 1 ? 0 : ext;
-  for (let i = -1; i <= m + 1; i++) {
-    if ((i === -1 && !extStart) || (i === m + 1 && !extEnd)) continue;
-    const t = (Math.max(0, Math.min(m, i)) / m) * f;
-    const u = 1 - t;
-    let x = u * u * ax + 2 * u * t * cx + t * t * bx;
-    let y = u * u * ay + 2 * u * t * cy + t * t * by;
-    const width = u * u * wa + 2 * u * t * wc + t * t * wb;
-    let dx = 2 * u * (cx - ax) + 2 * t * (bx - cx);
-    let dy = 2 * u * (cy - ay) + 2 * t * (by - cy);
-    let d = Math.hypot(dx, dy);
-    if (d < 1e-6) {
-      dx = bx - ax;
-      dy = by - ay;
-      d = Math.hypot(dx, dy);
+  if (f === 0) return;
+
+  const widthAt = (t: number) => quadAt(wa, wc, wb, t);
+  const w0 = widthAt(0);
+  const wm = widthAt(f / 2);
+  const wf = widthAt(f);
+  const widthTravel = Math.abs(wm - w0) + Math.abs(wf - wm);
+  const segments = Math.max(1, Math.min(MAX_WIDTH_SEGMENTS, Math.ceil(widthTravel / (stroke.size * WIDTH_STEP))));
+
+  for (let i = 0; i < segments; i++) {
+    const t0 = (i / segments) * f;
+    const t1 = ((i + 1) / segments) * f;
+    const x0 = quadAt(ax, cx, bx, t0);
+    const y0 = quadAt(ay, cy, by, t0);
+    const x1 = quadAt(ax, cx, bx, t1);
+    const y1 = quadAt(ay, cy, by, t1);
+    const dt = t1 - t0;
+    const qx = x0 + (quadDerivativeAt(ax, cx, bx, t0) * dt) / 2;
+    const qy = y0 + (quadDerivativeAt(ay, cy, by, t0) * dt) / 2;
+
+    ctx.lineWidth = Math.max(0.1, widthAt((t0 + t1) / 2));
+    if (Math.hypot(qx - x0, qy - y0) + Math.hypot(x1 - qx, y1 - qy) < 1e-5) {
+      dot(ctx, x0 + offsetX, y0, ctx.lineWidth / 2);
+      continue;
     }
-    if (d >= 1e-6) {
-      nx = -dy / d;
-      ny = dx / d;
-      if (i === -1) {
-        x -= (dx / d) * extStart;
-        y -= (dy / d) * extStart;
-      } else if (i === m + 1) {
-        x += (dx / d) * extEnd;
-        y += (dy / d) * extEnd;
-      }
-    }
-    const h = width / 2;
-    L.push(x + nx * h + offsetX, y + ny * h);
-    R.push(x - nx * h + offsetX, y - ny * h);
-    if (i <= m) {
-      lastX = x; lastY = y; lastW = width;
-    }
+    ctx.beginPath();
+    ctx.moveTo(x0 + offsetX, y0);
+    ctx.quadraticCurveTo(qx + offsetX, qy, x1 + offsetX, y1);
+    ctx.stroke();
   }
 
-  ctx.beginPath();
-  ctx.moveTo(L[0]!, L[1]!);
-  for (let i = 2; i < L.length; i += 2) ctx.lineTo(L[i]!, L[i + 1]!);
-  for (let i = R.length - 2; i >= 0; i -= 2) ctx.lineTo(R[i]!, R[i + 1]!);
-  ctx.closePath();
-  ctx.fill();
-
+  // Preserve the deliberate full-sized tap/start and the subtle Pencil-lift taper.
   if (startCap) dot(ctx, ax + offsetX, ay, wa / 2);
   if (endCap && f >= 1) dot(ctx, bx + offsetX, by, wb / 2);
-  if (f < 1) dot(ctx, lastX + offsetX, lastY, lastW / 2); // the pen tip
 }
 
 function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {

@@ -16,8 +16,13 @@ import { navigate, type Cleanup } from '../router.ts';
 import { text } from '../lib/i18n.ts';
 
 const AUTOSAVE_DELAY = 1200;
-const MIN_POINT_DISTANCE = 2; // spread units; drops jitter without losing shape
-const POSITION_SMOOTHING = 0.7; // 1 = raw; lower = smoother, laggier
+const MIN_RAW_SCREEN_DISTANCE = 0.2; // CSS px; preserves the same Pencil detail at every zoom
+const POSITION_SMOOTHING_SCREEN_SIGMA = 1; // CSS px; filters Pencil coordinate wobble equally at every zoom
+const POSITION_SMOOTHING_CUTOFF = 3; // Gaussian radii retained on either side of a point
+const MAX_RECORDED_POINT_DISTANCE = 2.5; // fixed card-space density, independent of zoom
+const MAX_SAMPLES_PER_CURVE = 64;
+const EDITOR_PIXEL_SCALE = 1.1;
+const EDITOR_MAX_CANVAS_PIXELS = 6_000_000;
 const STAGE_PADDING = 14;
 
 type Mode = 'write' | 'arrange';
@@ -208,7 +213,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     const w = stage.clientWidth;
     const h = stage.clientHeight;
     if (!w || !h) return;
-    ctx = prepareCanvas(canvas, w, h, w, h);
+    ctx = prepareCanvas(canvas, w, h, w, h, EDITOR_PIXEL_SCALE, EDITOR_MAX_CANVAS_PIXELS);
     dpr = canvas.width / w;
     viewport.refit(); // -> onChange(view, false) -> render()
   }
@@ -494,6 +499,16 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     pointerId: number;
     pointerType: string;
     stroke: Stroke;
+    rawPoints: Point[];
+    rawDistances: number[];
+    centerPoints: Point[];
+    nextCenterPoint: number;
+    captureScale: number;
+    seenSamples: Set<string>;
+    lastBatch: string[];
+    inputEvents: number;
+    inputSamples: number;
+    duplicateSamples: number;
     drawn: number;
     pressure: number;
     lastT: number;
@@ -523,19 +538,224 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     return prev * 0.4 + rawPressure(e) * 0.6;
   }
 
+  /** Extends b→a by the same distance beyond a. */
+  function extrapolatePoint(a: Point, b: Point): Point {
+    return {
+      x: 2 * a.x - b.x,
+      y: 2 * a.y - b.y,
+      p: a.p,
+      t: a.t,
+    };
+  }
+
+  function curveInterval(a: Point, b: Point): number {
+    // Centripetal Catmull–Rom: sqrt(chord length) avoids the cusps and tiny
+    // loops that uniform Catmull–Rom creates around uneven Pencil samples.
+    return Math.max(1e-4, Math.sqrt(Math.hypot(b.x - a.x, b.y - a.y)));
+  }
+
+  function pointOnCurve(p0: Point, p1: Point, p2: Point, p3: Point, u: number): Point {
+    const t0 = 0;
+    const t1 = t0 + curveInterval(p0, p1);
+    const t2 = t1 + curveInterval(p1, p2);
+    const t3 = t2 + curveInterval(p2, p3);
+    const t = t1 + (t2 - t1) * u;
+    const lerpAt = (a: { x: number; y: number }, b: { x: number; y: number }, ta: number, tb: number) => {
+      const q = (t - ta) / (tb - ta);
+      return { x: a.x + (b.x - a.x) * q, y: a.y + (b.y - a.y) * q };
+    };
+    const a1 = lerpAt(p0, p1, t0, t1);
+    const a2 = lerpAt(p1, p2, t1, t2);
+    const a3 = lerpAt(p2, p3, t2, t3);
+    const b1 = lerpAt(a1, a2, t0, t2);
+    const b2 = lerpAt(a2, a3, t1, t3);
+    const c = lerpAt(b1, b2, t1, t2);
+    return {
+      x: c.x,
+      y: c.y,
+      p: p1.p + (p2.p - p1.p) * u,
+      t: p1.t + (p2.t - p1.t) * u,
+    };
+  }
+
+  /** Appends a centripetal Catmull–Rom segment at a stable card-space density. */
+  function appendCurve(stroke: Stroke, p0: Point, p1: Point, p2: Point, p3: Point): void {
+    // Eight probes are plenty for a segment between adjacent hardware samples
+    // and give a reliable arc-length estimate without relying on Bézier bounds.
+    let length = 0;
+    let prev = p1;
+    for (let i = 1; i <= 8; i++) {
+      const next = pointOnCurve(p0, p1, p2, p3, i / 8);
+      length += Math.hypot(next.x - prev.x, next.y - prev.y);
+      prev = next;
+    }
+    const samples = Math.max(1, Math.min(MAX_SAMPLES_PER_CURVE, Math.ceil(length / MAX_RECORDED_POINT_DISTANCE)));
+    for (let i = 1; i <= samples; i++) {
+      const p = pointOnCurve(p0, p1, p2, p3, i / samples);
+      stroke.points.push({
+        x: Math.round(p.x * 10) / 10,
+        y: Math.round(p.y * 10) / 10,
+        p: Math.round(p.p * 100) / 100,
+        t: Math.max(stroke.points[stroke.points.length - 1]?.t ?? 0, Math.round(p.t)),
+      });
+    }
+  }
+
+  /** Adds a filtered control point and emits the curve segment it makes stable. */
+  function appendCenterPoint(stroke: Stroke, centerPoints: Point[], p: Point): void {
+    centerPoints.push(p);
+    const n = centerPoints.length;
+    if (n === 1) {
+      stroke.points.push(p);
+    } else if (n >= 3) {
+      const p1 = centerPoints[n - 3]!;
+      const p2 = centerPoints[n - 2]!;
+      const p0 = n === 3 ? extrapolatePoint(p1, p2) : centerPoints[n - 4]!;
+      appendCurve(stroke, p0, p1, p2, p);
+    }
+  }
+
+  /**
+   * Gaussian position filter measured along the travelled path, not by sample
+   * count. That makes it independent of Pencil event rate. Segment-length
+   * weights stop a dense cluster of samples from pulling the line towards it.
+   */
+  function smoothPointAt(points: Point[], distances: number[], index: number, sigma: number): Point {
+    const source = points[index]!;
+    if (index === 0 || index === points.length - 1 || points.length < 3) return { ...source };
+    const radius = sigma * POSITION_SMOOTHING_CUTOFF;
+    const target = distances[index]!;
+    let x = 0;
+    let y = 0;
+    let weight = 0;
+    for (let i = index; i >= 0 && target - distances[i]! <= radius; i--) {
+      const before = i > 0 ? distances[i]! - distances[i - 1]! : distances[1]! - distances[0]!;
+      const after = i + 1 < distances.length ? distances[i + 1]! - distances[i]! : before;
+      const mass = i === 0 || i === distances.length - 1 ? Math.max(before, after) / 2 : (before + after) / 2;
+      const d = distances[i]! - target;
+      const w = Math.max(1e-4, mass) * Math.exp(-(d * d) / (2 * sigma * sigma));
+      x += points[i]!.x * w;
+      y += points[i]!.y * w;
+      weight += w;
+    }
+    for (let i = index + 1; i < points.length && distances[i]! - target <= radius; i++) {
+      const before = distances[i]! - distances[i - 1]!;
+      const after = i + 1 < distances.length ? distances[i + 1]! - distances[i]! : before;
+      const mass = i === distances.length - 1 ? after / 2 : (before + after) / 2;
+      const d = distances[i]! - target;
+      const w = Math.max(1e-4, mass) * Math.exp(-(d * d) / (2 * sigma * sigma));
+      x += points[i]!.x * w;
+      y += points[i]!.y * w;
+      weight += w;
+    }
+    return weight ? { ...source, x: x / weight, y: y / weight } : { ...source };
+  }
+
+  /** Emits only points whose complete smoothing window is already known. */
+  function appendStableCenterPoints(a: Active): void {
+    const sigma = POSITION_SMOOTHING_SCREEN_SIGMA / a.captureScale;
+    const radius = sigma * POSITION_SMOOTHING_CUTOFF;
+    const latestDistance = a.rawDistances[a.rawDistances.length - 1] ?? 0;
+    while (
+      a.nextCenterPoint < a.rawPoints.length &&
+      latestDistance - a.rawDistances[a.nextCenterPoint]! >= radius
+    ) {
+      appendCenterPoint(
+        a.stroke,
+        a.centerPoints,
+        smoothPointAt(a.rawPoints, a.rawDistances, a.nextCenterPoint, sigma),
+      );
+      a.nextCenterPoint++;
+    }
+  }
+
+  function finalStroke(a: Active): Stroke {
+    const sigma = POSITION_SMOOTHING_SCREEN_SIGMA / a.captureScale;
+    const centerPoints = a.rawPoints.map((_, i) => smoothPointAt(a.rawPoints, a.rawDistances, i, sigma));
+    const stroke: Stroke = { color: a.stroke.color, size: a.stroke.size, points: [] };
+    const appended: Point[] = [];
+    for (const p of centerPoints) appendCenterPoint(stroke, appended, p);
+    const n = appended.length;
+    if (n >= 2) {
+      const p1 = appended[n - 2]!;
+      const p2 = appended[n - 1]!;
+      const p0 = n === 2 ? extrapolatePoint(p1, p2) : appended[n - 3]!;
+      appendCurve(stroke, p0, p1, p2, extrapolatePoint(p2, p1));
+    }
+    return stroke;
+  }
+
   function addPoint(a: Active, e: { clientX: number; clientY: number } & Partial<PointerEvent>): void {
-    const raw = viewport.clientToContent(e.clientX, e.clientY);
-    const pts = a.stroke.points;
-    const last = pts[pts.length - 1];
-    // Light low-pass on position: takes the tremor out of 240 Hz samples without visible lag.
-    const x = last ? last.x + (raw.x - last.x) * POSITION_SMOOTHING : raw.x;
-    const y = last ? last.y + (raw.y - last.y) * POSITION_SMOOTHING : raw.y;
-    if (last && Math.hypot(x - last.x, y - last.y) < MIN_POINT_DISTANCE) return;
+    const { x, y } = viewport.clientToContent(e.clientX, e.clientY);
+    const last = a.rawPoints[a.rawPoints.length - 1];
+    if (last && Math.hypot(x - last.x, y - last.y) * a.captureScale < MIN_RAW_SCREEN_DISTANCE) return;
     a.pressure = pressureOf(e as PointerEvent, a.pressure);
     const t = Math.max(a.lastT, nowT());
     a.lastT = t;
-    const p: Point = { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, p: Math.round(a.pressure * 100) / 100, t };
-    pts.push(p);
+    const p: Point = { x, y, p: Math.round(a.pressure * 100) / 100, t };
+    const distance = last
+      ? a.rawDistances[a.rawDistances.length - 1]! + Math.hypot(x - last.x, y - last.y)
+      : 0;
+    a.rawPoints.push(p);
+    a.rawDistances.push(distance);
+
+    const n = a.rawPoints.length;
+    if (n === 1) {
+      // Preserve the exact contact point; later points wait for a complete
+      // three-pixel smoothing window before they are painted live.
+      appendCenterPoint(a.stroke, a.centerPoints, p);
+      a.nextCenterPoint = 1;
+    }
+    appendStableCenterPoints(a);
+  }
+
+  function sampleGeometryKey(e: PointerEvent): string {
+    // Position is the stable identity of a hardware sample. WebKit may expose
+    // slightly different pressure metadata when it repeats the same position.
+    return `${e.clientX.toFixed(3)}:${e.clientY.toFixed(3)}`;
+  }
+
+  function sampleIdentity(e: PointerEvent): string {
+    return `${e.timeStamp.toFixed(3)}:${sampleGeometryKey(e)}`;
+  }
+
+  /**
+   * WebKit can expose the same underlying Pencil samples in consecutive
+   * coalesced batches. Sort by the hardware timestamp and remove both exact
+   * event repeats and an overlapping prefix before they reach the stroke.
+   */
+  function addPointerEvent(a: Active, e: PointerEvent): void {
+    const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+    const samples = (coalesced.length ? [...coalesced] : [e]).sort((x, y) => x.timeStamp - y.timeStamp);
+    const geometry = samples.map(sampleGeometryKey);
+    let overlap = Math.min(a.lastBatch.length, geometry.length);
+    while (overlap > 0) {
+      const oldStart = a.lastBatch.length - overlap;
+      let same = true;
+      for (let i = 0; i < overlap; i++) {
+        if (a.lastBatch[oldStart + i] !== geometry[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) break;
+      overlap--;
+    }
+
+    a.inputEvents++;
+    a.inputSamples += samples.length;
+    a.duplicateSamples += overlap;
+    for (let i = overlap; i < samples.length; i++) {
+      const sample = samples[i]!;
+      const key = sampleIdentity(sample);
+      if (a.seenSamples.has(key)) {
+        a.duplicateSamples++;
+        continue;
+      }
+      a.seenSamples.add(key);
+      addPoint(a, sample);
+    }
+    a.lastBatch = geometry.slice(-128);
   }
 
   function startStroke(e: PointerEvent): void {
@@ -544,7 +764,9 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       return;
     }
     if (viewport.gesturing) viewport.cancelPointers(); // a resting palm must not block the pen
-    if (canvas.style.transform) render(); // settle any in-flight zoom before inking
+    // Freeze a just-released pinch before mapping Pencil coordinates. Otherwise
+    // its snap animation can keep changing the coordinate system mid-stroke.
+    if (canvas.style.transform) viewport.setView(viewport.view);
     try {
       stage.setPointerCapture(e.pointerId);
     } catch {
@@ -555,13 +777,23 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       pointerId: e.pointerId,
       pointerType: e.pointerType,
       stroke: { color, size, points: [] },
+      rawPoints: [],
+      rawDistances: [],
+      centerPoints: [],
+      nextCenterPoint: 0,
+      captureScale: viewport.view.k,
+      seenSamples: new Set(),
+      lastBatch: [],
+      inputEvents: 0,
+      inputSamples: 0,
+      duplicateSamples: 0,
       drawn: 0,
       pressure: rawPressure(e),
       lastT: 0,
       startedAt: performance.now(),
       firstEvent: e,
     };
-    addPoint(active, e);
+    addPointerEvent(active, e);
     hint.hidden = true;
   }
 
@@ -572,15 +804,18 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
   function finishStroke(e: PointerEvent | null): void {
     const a = active!;
-    if (e?.type === 'pointerup') addPoint(a, e);
-    const s = a.stroke;
+    if (e?.type === 'pointerup') addPointerEvent(a, e);
+    const s = finalStroke(a);
     if (s.points.length) {
-      drawStrokeProgress(ctx, s, a.drawn, s.points.length, true, 0);
       strokes.push(s);
       pushHistory({ type: 'add', stroke: s });
+      render(); // one clean pass removes incremental anti-alias accumulation
       markStrokesChanged(false);
     }
     if (e) trace(e, `✓ stroke #${strokes.length} pts=${s.points.length}`);
+    debug?.log(
+      `stroke stats   zoom=${a.captureScale.toFixed(3)} events=${a.inputEvents} samples=${a.inputSamples} duplicates=${a.duplicateSamples} raw=${a.rawPoints.length} stored=${s.points.length}`,
+    );
     active = null;
   }
 
@@ -621,7 +856,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       }
       if (active?.pointerType === 'touch') {
         // Second finger: a young stroke becomes a pinch instead.
-        if (performance.now() - active.startedAt < 350 && active.stroke.points.length < 24) {
+        if (performance.now() - active.startedAt < 350 && active.rawPoints.length < 24) {
           const first = active.firstEvent;
           cancelStroke();
           viewport.pointerDown(first);
@@ -650,7 +885,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   }
 
   function onMove(e: PointerEvent): void {
-    if (debug && active && active.stroke.points.length === 1) trace(e, 'first move');
+    if (debug && active && active.rawPoints.length === 1) trace(e, 'first move');
     if (viewport.pointerMove(e)) return;
     if (mode === 'arrange') {
       arrangeMove(e);
@@ -663,9 +898,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     }
     if (!active || e.pointerId !== active.pointerId) return;
     e.preventDefault();
-    const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
-    if (events.length) for (const ce of events) addPoint(active, ce);
-    else addPoint(active, e);
+    addPointerEvent(active, e);
     active.drawn = drawStrokeProgress(ctx, active.stroke, active.drawn, active.stroke.points.length, false, 0);
   }
 
