@@ -35,3 +35,6 @@ export function qrSvg(text: string, opts: QrOptions = {}): string {
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n * c} ${n * c}" shape-rendering="geometricPrecision">${out}</svg>`;
 }
+
+// Exposed for the headless scannability tests.
+(globalThis as unknown as { __qrSvg?: typeof qrSvg }).__qrSvg = qrSvg;

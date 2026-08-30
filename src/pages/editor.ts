@@ -5,6 +5,8 @@ import { $, escapeHtml, icons } from '../lib/dom.ts';
 import { prepareImage } from '../lib/images.ts';
 import { BRUSHES, INKS, clearCanvas, drawAll, drawStrokeProgress, prepareCanvas } from '../lib/ink.ts';
 import { qrSvg } from '../lib/qr.ts';
+import { shapeQrSvg } from '../lib/shapeqr.ts';
+import { markSvg } from '../components/mark.ts';
 import { CIRCLE_BLUE, seedColor } from '../lib/themes.ts';
 import { logoHtml } from '../components/logo.ts';
 import { getEditToken, penSeen, setPenSeen } from '../lib/storage.ts';
@@ -111,7 +113,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
           <h2 class="display">Your card is ready</h2>
           <p class="muted">Anyone with this link can open it and watch your handwriting appear. Only this device can change it.</p>
           <div class="share-row">
-            <div class="qr" aria-label="QR code for the card link">${card.theme === 'circle' ? qrSvg(shareUrl, { style: 'dots', eyeColor: CIRCLE_BLUE }) : qrSvg(shareUrl)}</div>
+            <div class="qr" id="qr" aria-label="QR code for the card link">${qrSvg(shareUrl, { style: 'dots', eyeColor: CIRCLE_BLUE })}</div>
             <div class="share-col">
               <div class="link-box"><span class="link-text">${shareUrl}</span><button type="button" class="btn small" id="copy">Copy</button></div>
               <p class="fineprint left">Point a phone camera at the code to open the card.</p>
@@ -964,6 +966,11 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
   // --- share / navigation --------------------------------------------------
   const share = $(root, '#share');
+  void shapeQrSvg(shareUrl, { image: { svg: markSvg(), width: 0.45, height: 0.45 }, color: '#1f1a17', eyeColor: CIRCLE_BLUE })
+    .then((svg) => {
+      $(root, '#qr').innerHTML = svg;
+    })
+    .catch(() => {});
   $(root, '#done').addEventListener('click', async () => {
     setMode('write');
     share.hidden = false;

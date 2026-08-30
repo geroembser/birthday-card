@@ -1435,12 +1435,12 @@ body.editing {
 }
 
 .qr {
-  flex: 0 0 116px;
-  width: 116px;
-  height: 116px;
-  padding: 8px;
+  flex: 0 0 200px;
+  width: 200px;
+  height: 200px;
+  padding: 20px; /* quiet zone: ≥ 4 modules, dot codes need it */
   background: #fff;
-  border-radius: 12px;
+  border-radius: 16px;
   border: 1px solid var(--line);
 }
 
@@ -1449,6 +1449,7 @@ body.editing {
   width: 100%;
   height: 100%;
 }
+
 
 .share-col {
   flex: 1;
