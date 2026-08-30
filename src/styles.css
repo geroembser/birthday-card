@@ -777,6 +777,16 @@ input {
 
 /* --- editor ------------------------------------------------------------------ */
 
+html:has(body.editing),
+body.editing {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
 .editor {
   position: fixed;
   inset: 0;

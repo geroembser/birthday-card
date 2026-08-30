@@ -576,7 +576,40 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp);
   stage.addEventListener('pointercancel', onUp);
+  document.body.classList.add('editing');
   if (debug) {
+    // Hover (Pencil in the air) — throttled — shows the pen approaching even if the down never arrives.
+    let lastHover = 0;
+    stage.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'pen' && e.buttons === 0 && performance.now() - lastHover > 150) {
+        lastHover = performance.now();
+        trace(e, 'hover');
+      }
+    });
+    stage.addEventListener('pointerenter', (e) => {
+      if (e.pointerType !== 'touch') trace(e, '');
+    });
+    // Document-level, capture phase: did the OS hand the contact to some other element?
+    const describe = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return el?.tagName ? `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}${el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : ''}` : String(t);
+    };
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!stage.contains(e.target as Node)) trace(e, `DOC target=${describe(e.target)}`);
+      },
+      true,
+    );
+    document.addEventListener(
+      'touchstart',
+      (e) => {
+        if (!stage.contains(e.target as Node)) debug.log(`touchstart     DOC touches=${e.touches.length} target=${describe(e.target)}`);
+      },
+      { capture: true, passive: true },
+    );
+    window.addEventListener('blur', () => debug.log('window blur'));
+    window.addEventListener('focus', () => debug.log('window focus'));
     for (const type of ['lostpointercapture', 'gotpointercapture', 'pointerleave', 'pointerout'] as const) {
       stage.addEventListener(type, (e) => {
         if (e.pointerType !== 'touch') trace(e, '');
@@ -782,6 +815,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   renderImages();
 
   return () => {
+    document.body.classList.remove('editing');
     ro.disconnect();
     viewport.destroy();
     debug?.destroy();
