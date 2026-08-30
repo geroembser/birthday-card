@@ -576,6 +576,16 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp);
   stage.addEventListener('pointercancel', onUp);
+
+  // iPadOS Scribble watches Pencil input in Safari and swallows quick strokes it
+  // takes for handwriting aimed at a text field (WebKit bug 217430). Cancelling
+  // the touch events' default keeps Scribble out; buttons are exempt so taps click.
+  const keepScribbleOut = (e: TouchEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    if (e.type === 'touchmove' || Array.from(e.changedTouches).some((t) => t.touchType === 'stylus')) e.preventDefault();
+  };
+  stage.addEventListener('touchstart', keepScribbleOut, { passive: false });
+  stage.addEventListener('touchmove', keepScribbleOut, { passive: false });
   document.body.classList.add('editing');
   if (debug) {
     // Hover (Pencil in the air) — throttled — shows the pen approaching even if the down never arrives.
