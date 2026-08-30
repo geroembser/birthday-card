@@ -26,7 +26,14 @@ npm install
 npm run dev        # API on :8787, Vite on :5173 (proxying /api)
 ```
 
-Open `http://localhost:5173`. To test on an iPad on the same network use the LAN address Vite prints (Vite is started with `--host`).
+Open `http://localhost:5174`. To test on an iPad, either use the LAN address Vite prints, or — better, because
+clipboard and the share sheet need HTTPS — open a Cloudflare tunnel in a second terminal:
+
+```sh
+npm run tunnel     # prints a https://….trycloudflare.com URL; open it on the iPad
+```
+
+That's a "quick tunnel" (no account, random hostname, dies with the process). Hot reload works through it.
 
 `npm run typecheck` runs `tsc` over client, server and shared code.
 

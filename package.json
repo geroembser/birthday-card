@@ -15,7 +15,8 @@
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.ts",
     "deploy": "vite build && wrangler deploy",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
+    "tunnel": "cloudflared tunnel --url http://localhost:5174"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
