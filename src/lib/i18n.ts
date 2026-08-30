@@ -146,6 +146,7 @@ const english: Messages = {
     blush: { name: 'Blush', blurb: 'Soft pink and balloons' },
     botanical: { name: 'Botanical', blurb: 'Sage green and leaves' },
     circle: { name: 'Circle', blurb: 'White, one bright colour' },
+    classic: { name: 'Classic', blurb: 'Cobalt lettering and painted folk florals' },
   },
   inks: {
     ink: 'Ink',
@@ -271,6 +272,7 @@ const german: Messages = {
     blush: { name: 'Rosé', blurb: 'Zartrosa mit Luftballons' },
     botanical: { name: 'Botanisch', blurb: 'Salbeigrün mit Blättern' },
     circle: { name: 'Kreis', blurb: 'Weiß mit einem leuchtenden Farbakzent' },
+    classic: { name: 'Klassisch', blurb: 'Kobaltblaue Schrift mit gemalten Blüten' },
   },
   inks: {
     ink: 'Schwarz',

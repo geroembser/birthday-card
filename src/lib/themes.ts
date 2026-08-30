@@ -10,6 +10,7 @@ export const THEMES: readonly Theme[] = [
   { id: 'blush' },
   { id: 'botanical' },
   { id: 'circle' },
+  { id: 'classic' },
 ];
 
 /** my.card's brand blue — the default accent for the Circle theme. */

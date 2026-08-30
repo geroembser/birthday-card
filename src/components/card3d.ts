@@ -23,6 +23,7 @@ export interface Card3D {
 }
 
 const PIXEL_SCALE = 2; // extra canvas resolution so zooming in stays crisp
+const COVER_BACKFACE_DELAY = 850; // halfway through the 1.7s hinge transition
 
 export function createCard3D(theme: ThemeId, recipient: string): Card3D {
   const scene = el('div', 'scene');
@@ -49,7 +50,8 @@ export function createCard3D(theme: ThemeId, recipient: string): Card3D {
   const float = $(scene, '.card-float');
   const card = $(scene, '.card3d');
   const cover = $(scene, '.cover');
-  $(scene, '.face-front').append(renderCover(theme, recipient));
+  const front = $(scene, '.face-front');
+  front.append(renderCover(theme, recipient));
   const rightPage = $(scene, '.page-right');
   const pages = [
     { root: $(scene, '.page-left'), offsetX: 0 },
@@ -107,6 +109,11 @@ export function createCard3D(theme: ThemeId, recipient: string): Card3D {
     requestAnimationFrame(() => requestAnimationFrame(() => (float.style.transform = 'none')));
 
     card.classList.add('open');
+    // WebKit may paint promoted descendants through a back-facing parent.
+    // Stop painting the front once the hinge has rotated beyond 90 degrees.
+    setTimeout(() => {
+      front.style.visibility = 'hidden';
+    }, COVER_BACKFACE_DELAY);
 
     return new Promise((resolve) => {
       let settled = false;

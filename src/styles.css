@@ -267,14 +267,8 @@ input {
 
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
-}
-
-@media (max-width: 640px) {
-  .theme-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
 }
 
 @media (max-width: 400px) {
@@ -621,6 +615,181 @@ input {
   text-shadow: 0 0 1cqw #fff, 0 0 2cqw #fff;
 }
 
+/* Classic — illuminated folk florals and calligraphic lettering */
+.cover-art[data-theme='classic'] {
+  --cover-bg: #fbfaf3;
+  --cover-ink: #082c63;
+  --classic-green: #477746;
+  --classic-blue: #07549b;
+  --classic-sky: #58a9c7;
+  --classic-red: #c7372f;
+  --classic-gold: #d3a027;
+  background:
+    radial-gradient(circle at 20% 12%, rgba(215, 225, 205, 0.2), transparent 25%),
+    radial-gradient(circle at 82% 88%, rgba(88, 169, 199, 0.08), transparent 25%),
+    linear-gradient(105deg, rgba(70, 92, 54, 0.018), transparent 32%, rgba(255, 255, 255, 0.35) 67%, transparent),
+    #fbfaf3;
+}
+
+.cover-art[data-theme='classic']::after {
+  inset: 4.5cqw;
+  border: 0.18cqw solid var(--classic-green);
+  border-radius: 0;
+  opacity: 0.28;
+}
+
+.cover-art[data-theme='classic'] .cover-deco {
+  inset: 0;
+  opacity: 0.94;
+}
+
+.classic-pattern {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.classic-vines,
+.classic-curls {
+  fill: none;
+  stroke: var(--classic-green);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.classic-curls {
+  stroke-width: 1.45;
+}
+
+.classic-leaves {
+  fill: #e5eddd;
+  stroke: var(--classic-green);
+  stroke-width: 1.35;
+  stroke-linejoin: round;
+}
+
+.classic-berries {
+  fill: var(--classic-red);
+  stroke: #9e2724;
+  stroke-width: 1.2;
+}
+
+.classic-flowers .classic-blue,
+.classic-trefoil path {
+  fill: var(--classic-blue);
+  stroke: #06386c;
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+
+.classic-flowers .classic-sky {
+  fill: var(--classic-sky);
+  stroke: none;
+}
+
+.classic-flowers .classic-gold {
+  fill: #f0d895;
+  stroke: var(--classic-gold);
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+}
+
+.classic-trefoil.small {
+  opacity: 0.9;
+}
+
+.cover-art[data-theme='classic'] .cover-text {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 13cqw 10cqw 11cqw;
+  color: var(--cover-ink);
+}
+
+.classic-occasion {
+  display: block;
+  padding: 1.2cqw 3cqw 1cqw;
+  background: rgba(251, 250, 243, 0.86);
+  box-shadow: 0 0 3cqw 2cqw rgba(251, 250, 243, 0.75);
+  font-family: var(--font-ui);
+  font-size: 3.6cqw;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.classic-motto {
+  display: block;
+  width: 78cqw;
+  margin: 8cqw auto 0;
+  color: var(--cover-ink);
+  font-family: 'UnifrakturMaguntia', 'Times New Roman', serif;
+  font-size: 18cqw;
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  line-height: 0.78;
+  text-shadow:
+    0 0 1cqw #fbfaf3,
+    0 0 2.4cqw #fbfaf3,
+    0 0 4cqw rgba(251, 250, 243, 0.9);
+}
+
+.classic-motto > span {
+  display: block;
+}
+
+.classic-motto > span:first-child {
+  margin-bottom: 1cqw;
+  font-size: 0.72em;
+}
+
+.cover-art[data-theme='classic'] .cover-for {
+  max-width: 74cqw;
+  margin-top: 6cqw;
+  padding: 1.1cqw 2.8cqw;
+  border: 0.15cqw solid rgba(71, 119, 70, 0.42);
+  border-radius: 999px;
+  background: rgba(251, 250, 243, 0.9);
+  box-shadow: 0 0 2.4cqw 1.5cqw rgba(251, 250, 243, 0.68);
+  font-size: 3.7cqw;
+  letter-spacing: 0.17em;
+  line-height: 1.45;
+  opacity: 1;
+}
+
+.classic-wish {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2.4cqw;
+  margin-top: auto;
+  padding: 1.2cqw 2.2cqw;
+  color: var(--cover-ink);
+  background: rgba(251, 250, 243, 0.86);
+  box-shadow: 0 0 3cqw 1.8cqw rgba(251, 250, 243, 0.72);
+  font-family: var(--font-ui);
+  font-size: 3.1cqw;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.classic-wish::before,
+.classic-wish::after {
+  content: '';
+  width: 6cqw;
+  height: 0.2cqw;
+  background: var(--classic-green);
+  opacity: 0.75;
+}
+
 /* --- the 3D card ------------------------------------------------------------- */
 
 .scene {
@@ -793,6 +962,16 @@ input {
 
 .viewer[data-theme='botanical'] {
   background: linear-gradient(180deg, #eef3ea, #d9e5d5);
+}
+
+.viewer[data-theme='classic'] {
+  background:
+    radial-gradient(100% 70% at 50% 0%, rgba(255, 255, 255, 0.76), transparent 72%),
+    linear-gradient(180deg, #edf0e8, #d9e1d5);
+}
+
+.editor[data-theme='classic'] {
+  background: #e8ede4;
 }
 
 .viewer[data-theme='circle'] {

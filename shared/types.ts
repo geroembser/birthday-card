@@ -26,7 +26,7 @@ export interface CardImage {
   t: number;
 }
 
-export type ThemeId = 'confetti' | 'midnight' | 'blush' | 'botanical' | 'circle';
+export type ThemeId = 'confetti' | 'midnight' | 'blush' | 'botanical' | 'circle' | 'classic';
 
 export interface CardData {
   id: string;
@@ -73,7 +73,7 @@ export const PAGE_W = 1000;
 export const PAGE_H = 1400;
 export const SPREAD_W = PAGE_W * 2;
 
-export const THEME_IDS: readonly ThemeId[] = ['confetti', 'midnight', 'blush', 'botanical', 'circle'];
+export const THEME_IDS: readonly ThemeId[] = ['confetti', 'midnight', 'blush', 'botanical', 'circle', 'classic'];
 
 export const IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/png', 'image/webp'];
 
