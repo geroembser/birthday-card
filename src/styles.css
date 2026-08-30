@@ -1134,6 +1134,55 @@ input {
   background: var(--bg);
 }
 
+/* --- debug panel (?debug=1) --------------------------------------------------- */
+
+.debug-panel {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  width: min(420px, 60vw);
+  max-height: 46%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(20, 16, 14, 0.82);
+  color: #e8e2d8;
+  border-radius: 10px;
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.debug-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  pointer-events: auto;
+}
+
+.debug-tools button {
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 0;
+  background: #e8e2d8;
+  color: #1f1a17;
+}
+
+.debug-count {
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-log {
+  margin: 0;
+  padding: 0 8px 8px;
+  overflow: hidden;
+  white-space: pre;
+}
+
 /* --- modal ------------------------------------------------------------------- */
 
 .modal {

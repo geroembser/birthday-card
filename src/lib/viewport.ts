@@ -44,6 +44,10 @@ export interface Viewport {
   readonly fitView: View;
   /** True while fingers/gesture are actively manipulating the view. */
   readonly gesturing: boolean;
+  /** True while two or more fingers are pinching. */
+  readonly pinching: boolean;
+  /** Drop all tracked pointers (e.g. a resting palm once the pen lands). */
+  cancelPointers(): void;
   /** Toggle double-tap / double-click zoom at runtime. */
   zoomOnDoubleTap: boolean;
   setView(v: View, animateMs?: number): void;
@@ -291,6 +295,22 @@ export function createViewport(o: ViewportOptions): Viewport {
     },
     get gesturing() {
       return pointers.size > 0 || gestureBase !== null;
+    },
+    get pinching() {
+      return pointers.size >= 2;
+    },
+    cancelPointers() {
+      for (const id of pointers.keys()) {
+        try {
+          el.releasePointerCapture(id);
+        } catch {
+          /* ignore */
+        }
+      }
+      pointers.clear();
+      pinch = null;
+      drag = null;
+      tap = null;
     },
     get zoomOnDoubleTap() {
       return zoomOnDoubleTap;

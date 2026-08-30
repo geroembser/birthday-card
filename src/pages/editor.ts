@@ -7,6 +7,7 @@ import { BRUSHES, INKS, clearCanvas, drawAll, drawStrokeProgress, prepareCanvas 
 import { qrSvg } from '../lib/qr.ts';
 import { getEditToken, penSeen, setPenSeen } from '../lib/storage.ts';
 import { createViewport, type View } from '../lib/viewport.ts';
+import { createDebugPanel } from '../lib/debug.ts';
 import { navigate, type Cleanup } from '../router.ts';
 
 const AUTOSAVE_DELAY = 1200;
@@ -141,6 +142,9 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   const zoomBadge = $(root, '#zoom-badge');
   let ctx = canvas.getContext('2d')!;
   let dpr = 1;
+  const debug = new URLSearchParams(location.search).has('debug') ? createDebugPanel(stage) : null;
+  const trace = (e: PointerEvent, note: string) =>
+    debug?.log(`${e.type.padEnd(13)} ${e.pointerType}#${e.pointerId} b=${e.buttons} p=${e.pressure.toFixed(2)} ${e.isPrimary ? 'prim' : 'sec '} @${e.clientX | 0},${e.clientY | 0} ${note}`);
   let renderedView: View = { k: 1, tx: 0, ty: 0 };
 
   // --- viewport (zoom & pan) ------------------------------------------------
@@ -359,10 +363,14 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   }
   let imageDrag: ImageDrag | null = null;
 
+  function rawPressure(e: PointerEvent): number {
+    if (e.pointerType !== 'pen') return 0.5;
+    return Math.min(1, Math.max(0.12, e.pressure || 0.5));
+  }
+
   function pressureOf(e: PointerEvent, prev: number): number {
     if (e.pointerType !== 'pen') return 0.5;
-    const raw = Math.min(1, Math.max(0.05, e.pressure || 0.5));
-    return prev * 0.55 + raw * 0.45;
+    return prev * 0.4 + rawPressure(e) * 0.6;
   }
 
   function addPoint(a: Active, e: { clientX: number; clientY: number } & Partial<PointerEvent>): void {
@@ -378,15 +386,24 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   }
 
   function startStroke(e: PointerEvent): void {
-    if (viewport.gesturing) return;
+    if (viewport.pinching) {
+      trace(e, 'ignored: pinching');
+      return;
+    }
+    if (viewport.gesturing) viewport.cancelPointers(); // a resting palm must not block the pen
     if (canvas.style.transform) render(); // settle any in-flight zoom before inking
-    stage.setPointerCapture(e.pointerId);
+    try {
+      stage.setPointerCapture(e.pointerId);
+    } catch {
+      /* Safari can refuse capture for a pointer that is already gone */
+    }
+    trace(e, `→ stroke #${strokes.length + 1}`);
     active = {
       pointerId: e.pointerId,
       pointerType: e.pointerType,
       stroke: { color, size, points: [] },
       drawn: 0,
-      pressure: e.pointerType === 'pen' ? Math.min(1, Math.max(0.05, e.pressure || 0.5)) : 0.5,
+      pressure: rawPressure(e),
       lastT: 0,
       startedAt: performance.now(),
       firstEvent: e,
@@ -400,15 +417,16 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     render(); // wipes the tentative ink
   }
 
-  function finishStroke(e: PointerEvent): void {
+  function finishStroke(e: PointerEvent | null): void {
     const a = active!;
-    if (e.type === 'pointerup') addPoint(a, e);
+    if (e?.type === 'pointerup') addPoint(a, e);
     const s = a.stroke;
     if (s.points.length) {
       drawStrokeProgress(ctx, s, a.drawn, s.points.length, true, 0);
       strokes.push(s);
       markStrokesChanged(false);
     }
+    if (e) trace(e, `✓ stroke #${strokes.length} pts=${s.points.length}`);
     active = null;
   }
 
@@ -427,7 +445,12 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     }
 
     if (e.pointerType === 'touch') {
+      if (active?.pointerType === 'pen') {
+        trace(e, 'ignored: pen is down (palm)');
+        return;
+      }
       if (penMode) {
+        trace(e, '→ pan/pinch');
         viewport.pointerDown(e);
         return;
       }
@@ -450,13 +473,19 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     }
 
     if (e.pointerType === 'pen') {
-      if (!active) startStroke(e);
+      // A stale stroke (missed pointerup) must never swallow the next one.
+      if (active) {
+        trace(e, `stale stroke #${strokes.length + 1} closed`);
+        finishStroke(null);
+      }
+      startStroke(e);
       return;
     }
     if (e.button === 0 && !active) startStroke(e);
   }
 
   function onMove(e: PointerEvent): void {
+    if (debug && active && active.stroke.points.length === 1) trace(e, 'first move');
     if (viewport.pointerMove(e)) return;
     if (mode === 'arrange') {
       arrangeMove(e);
@@ -473,6 +502,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   function onUp(e: PointerEvent): void {
     activePointers = Math.max(0, activePointers - 1);
     if (viewport.pointerUp(e)) {
+      trace(e, 'pan/pinch end');
       if (activePointers === 0) scheduleSave();
       return;
     }
@@ -480,7 +510,15 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       arrangeUp(e);
       return;
     }
-    if (!active || e.pointerId !== active.pointerId) return;
+    if (!active) {
+      trace(e, 'no active stroke');
+      return;
+    }
+    // There is only one pen; accept its up even if the id changed under us.
+    if (e.pointerId !== active.pointerId && !(e.pointerType === 'pen' && active.pointerType === 'pen')) {
+      trace(e, 'other pointer');
+      return;
+    }
     e.preventDefault();
     finishStroke(e);
   }
@@ -538,6 +576,16 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp);
   stage.addEventListener('pointercancel', onUp);
+  if (debug) {
+    for (const type of ['lostpointercapture', 'gotpointercapture', 'pointerleave', 'pointerout'] as const) {
+      stage.addEventListener(type, (e) => {
+        if (e.pointerType !== 'touch') trace(e, '');
+      });
+    }
+    for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) {
+      stage.addEventListener(type, (e) => debug.log(`${type.padEnd(13)} touches=${(e as TouchEvent).touches.length}`), { passive: true });
+    }
+  }
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // --- tools ------------------------------------------------------------------
@@ -736,6 +784,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   return () => {
     ro.disconnect();
     viewport.destroy();
+    debug?.destroy();
     window.clearTimeout(saveTimer);
     window.clearTimeout(badgeTimer);
     document.removeEventListener('visibilitychange', onVisibility);

@@ -63,8 +63,17 @@ export function clearCanvas(ctx: CanvasRenderingContext2D): void {
   ctx.restore();
 }
 
+/**
+ * Pressure → line width. The floor is deliberately high: a light Pencil touch
+ * reports pressure near 0 and must still leave a visible mark.
+ */
 function widthFor(size: number, pressure: number): number {
-  return size * (0.35 + 0.95 * pressure);
+  return size * (0.5 + 0.8 * pressure);
+}
+
+/** A single tap: a pen dot the size of a normal line, whatever the (unreliable) tap pressure. */
+function dotRadius(size: number, pressure: number): number {
+  return Math.max(widthFor(size, pressure) / 2, size * 0.45);
 }
 
 function mid(a: Point, b: Point): { x: number; y: number } {
@@ -92,7 +101,7 @@ export function drawUnit(ctx: CanvasRenderingContext2D, stroke: Stroke, k: numbe
   if (n === 1) {
     const p0 = pts[0]!;
     ctx.beginPath();
-    ctx.arc(p0.x + offsetX, p0.y, widthFor(stroke.size, p0.p) / 2, 0, Math.PI * 2);
+    ctx.arc(p0.x + offsetX, p0.y, dotRadius(stroke.size, p0.p), 0, Math.PI * 2);
     ctx.fill();
     return;
   }
