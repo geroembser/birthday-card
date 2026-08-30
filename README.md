@@ -3,8 +3,8 @@
 Handwrite a birthday card on your iPad, share it as a link, and let them watch every stroke unfold.
 
 - **Create** a card — pick a cover, optionally add a name. No account.
-- **Write** on the inside spread with an Apple Pencil (pressure-sensitive, palm-rejected). Every stroke is recorded with timing.
-- **Share** the link. The recipient sees a 3D closed card; a tap opens it and your handwriting replays at a comfortable reading pace.
+- **Write** on the inside spread with an Apple Pencil (pressure-sensitive, palm-rejected). Every stroke is recorded with timing. Pinch (or ctrl/⌘-scroll) to zoom, fingers pan, and add photos that sit under the ink.
+- **Share** the link or its QR code. The recipient sees a 3D closed card; a tap opens it and your handwriting replays at a comfortable reading pace — with fresh ink fading in, photos appearing when you added them, and, on small screens, the view gliding to the page being written. Tap to skip to the finished card; pinch to look closer.
 - Only the device that created a card can edit it (a secret edit token lives in that browser's `localStorage`). Everyone else just views.
 
 ## Stack
@@ -76,7 +76,8 @@ server/db.ts           SQLite CardStore
 worker/index.ts        Cloudflare Workers entry: R2 CardStore, Workers Assets
 src/main.ts            routes: /  /edit/:id  /c/:id
 src/lib/ink.ts         incremental stroke renderer (used live and for replay)
-src/lib/replay.ts      timeline compression + rAF playback
+src/lib/replay.ts      timeline compression + wet-ink rAF playback (skip / page focus / photo cues)
+src/lib/viewport.ts    Preview-style zoom & pan (pinch, trackpad, wheel, double-tap, animated focus)
 src/components/card3d.ts   the folding card
 src/pages/*            home / editor / viewer
 ```
@@ -91,6 +92,10 @@ Strokes are stored with real timestamps. On playback (`src/lib/replay.ts`) pen m
 | ------ | ---------------- | --------------------- | -------------------------------------------- |
 | POST   | `/api/cards`     | –                     | `{theme, recipient}` → `{card, editToken}`   |
 | GET    | `/api/cards/:id` | –                     | `CardData`                                   |
-| PUT    | `/api/cards/:id` | `Bearer <editToken>`  | `{theme?, recipient?, strokes?}` → `CardData` |
+| PUT    | `/api/cards/:id` | `Bearer <editToken>`  | `{theme?, recipient?, strokes?, images?}` → `SaveResponse` |
+| POST   | `/api/cards/:id/strokes` | `Bearer <editToken>` | `{after, strokes}` appends (409 if `after` ≠ server count) |
+| POST   | `/api/cards/:id/images?x&y&w&h&t` | `Bearer <editToken>` | raw image bytes → `{image, …}` |
+| GET    | `/api/cards/:id/images/:imageId` | – | the image (immutable cache) |
+| DELETE | `/api/cards/:id/images/:imageId` | `Bearer <editToken>` | removes the photo |
 
 Limits live in `shared/types.ts` (`LIMITS`). There is no rate limiting — add some at the proxy if you expose this publicly.

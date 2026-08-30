@@ -1,13 +1,19 @@
-import type { CardData, Point, Stroke } from '../../shared/types.ts';
-import { PAGE_H, SPREAD_W } from '../../shared/types.ts';
-import { ApiError, getCard, updateCard } from '../lib/api.ts';
+import type { CardData, CardImage, Point, Stroke } from '../../shared/types.ts';
+import { LIMITS, PAGE_H, PAGE_W, SPREAD_W } from '../../shared/types.ts';
+import { ApiError, appendStrokes, deleteImage, getCard, imageUrl, updateCard, uploadImage } from '../lib/api.ts';
 import { $, escapeHtml, icons } from '../lib/dom.ts';
+import { prepareImage } from '../lib/images.ts';
 import { BRUSHES, INKS, clearCanvas, drawAll, drawStrokeProgress, prepareCanvas } from '../lib/ink.ts';
+import { qrSvg } from '../lib/qr.ts';
 import { getEditToken, penSeen, setPenSeen } from '../lib/storage.ts';
+import { createViewport, type View } from '../lib/viewport.ts';
 import { navigate, type Cleanup } from '../router.ts';
 
-const AUTOSAVE_DELAY = 900;
+const AUTOSAVE_DELAY = 1200;
 const MIN_POINT_DISTANCE = 1.2; // spread units; drops jitter without losing shape
+const STAGE_PADDING = 14;
+
+type Mode = 'write' | 'arrange';
 
 export async function renderEditor(root: HTMLElement, id: string): Promise<Cleanup | void> {
   document.title = 'Write your card · Birthday Card';
@@ -36,6 +42,8 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       </main>`;
     return;
   }
+  card.images ??= [];
+  const editToken: string = token;
 
   const title = card.recipient ? `Card for ${escapeHtml(card.recipient)}` : 'Your card';
   const shareUrl = `${location.origin}/c/${card.id}`;
@@ -52,11 +60,23 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
       </header>
 
       <div class="editor-stage" id="stage">
-        <div class="spread" id="spread">
-          <canvas id="ink" aria-label="Card writing surface"></canvas>
+        <div class="paper" id="paper">
+          <div class="paper-images" id="paper-images"></div>
           <div class="fold"></div>
-          <p class="spread-hint" id="hint">${card.strokes.length ? '' : 'Write your message here.<br /><small>Left page, right page — it’s all yours.</small>'}</p>
+          <p class="spread-hint" id="hint">Write your message here.<br /><small>Left page, right page — it’s all yours. Pinch to zoom.</small></p>
         </div>
+        <canvas id="ink" aria-label="Card writing surface"></canvas>
+        <div class="arrange-layer" id="arrange-layer" hidden>
+          <div class="img-frame" id="img-frame">
+            <button type="button" class="img-delete" id="img-delete" aria-label="Remove photo">${icons.trash}</button>
+            <div class="img-handle" aria-hidden="true"></div>
+          </div>
+        </div>
+        <div class="arrange-bar" id="arrange-bar" hidden>
+          <span>Drag a photo to move it, pull the corner to resize.</span>
+          <button type="button" class="btn small" id="arrange-done">${icons.check} Done</button>
+        </div>
+        <div class="zoom-badge" id="zoom-badge" hidden></div>
         <p class="rotate-hint">Turn your device sideways for a bigger card.</p>
       </div>
 
@@ -68,17 +88,29 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
           ${BRUSHES.map((b, i) => `<button type="button" class="brush ${i === 1 ? 'active' : ''}" data-size="${b.size}" aria-label="${b.name}" aria-pressed="${i === 1}"><span style="--s:${6 + b.size}px"></span></button>`).join('')}
         </div>
         <div class="tool-group">
+          <button type="button" class="tool" id="photo" aria-label="Photos">${icons.photo}</button>
           <button type="button" class="tool" id="undo" aria-label="Undo last stroke">${icons.undo}</button>
           <button type="button" class="tool" id="clear" aria-label="Clear the card">${icons.trash}</button>
         </div>
+        <div class="popover" id="photo-menu" hidden>
+          <button type="button" id="add-photo">${icons.photo} Add a photo</button>
+          <button type="button" id="arrange-photos">${icons.pencil} Arrange photos</button>
+        </div>
       </footer>
+      <input type="file" id="file" accept="image/*" hidden />
 
       <div class="modal" id="share" hidden>
         <div class="modal-card">
           <p class="eyebrow">Ready to send</p>
           <h2 class="display">Your card is ready</h2>
           <p class="muted">Anyone with this link can open it and watch your handwriting appear. Only this device can change it.</p>
-          <div class="link-box"><span class="link-text">${shareUrl}</span><button type="button" class="btn small" id="copy">Copy</button></div>
+          <div class="share-row">
+            <div class="qr" aria-label="QR code for the card link">${qrSvg(shareUrl)}</div>
+            <div class="share-col">
+              <div class="link-box"><span class="link-text">${shareUrl}</span><button type="button" class="btn small" id="copy">Copy</button></div>
+              <p class="fineprint left">Point a phone camera at the code to open the card.</p>
+            </div>
+          </div>
           <div class="modal-actions">
             <button type="button" class="btn primary" id="native-share" hidden>Share…</button>
             <a class="btn" data-link href="/c/${card.id}">Open the card</a>
@@ -90,74 +122,242 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
 
   // --- state ---------------------------------------------------------------
   const strokes: Stroke[] = card.strokes;
+  const images: CardImage[] = card.images;
   let color: string = INKS[0].color;
   let size: number = BRUSHES[1].size;
+  let mode: Mode = 'write';
+  let selected: CardImage | null = null;
+  const blobUrls = new Map<string, string>();
 
   const stage = $(root, '#stage');
-  const spread = $(root, '#spread');
+  const paper = $(root, '#paper');
+  const paperImages = $(root, '#paper-images');
   const canvas = $<HTMLCanvasElement>(root, '#ink');
   const hint = $(root, '#hint');
   const status = $(root, '#status');
+  const arrangeLayer = $(root, '#arrange-layer');
+  const frame = $(root, '#img-frame');
+  const arrangeBar = $(root, '#arrange-bar');
+  const zoomBadge = $(root, '#zoom-badge');
   let ctx = canvas.getContext('2d')!;
+  let dpr = 1;
+  let renderedView: View = { k: 1, tx: 0, ty: 0 };
 
-  // --- layout --------------------------------------------------------------
-  function layout(): void {
-    const pad = 12;
-    const availW = Math.max(100, stage.clientWidth - pad * 2);
-    const availH = Math.max(100, stage.clientHeight - pad * 2);
-    const scale = Math.min(availW / SPREAD_W, availH / PAGE_H);
-    const w = Math.floor(SPREAD_W * scale);
-    const h = Math.floor(PAGE_H * scale);
-    spread.style.width = `${w}px`;
-    spread.style.height = `${h}px`;
-    ctx = prepareCanvas(canvas, SPREAD_W, PAGE_H, w, h);
-    redraw();
+  // --- viewport (zoom & pan) ------------------------------------------------
+  const fitView = (): View => {
+    const cw = stage.clientWidth;
+    const ch = stage.clientHeight;
+    const k = Math.max(0.01, Math.min((cw - STAGE_PADDING * 2) / SPREAD_W, (ch - STAGE_PADDING * 2) / PAGE_H));
+    return { k, tx: (cw - SPREAD_W * k) / 2, ty: (ch - PAGE_H * k) / 2 };
+  };
+
+  const viewport = createViewport({
+    el: stage,
+    content: () => ({ x: 0, y: 0, w: SPREAD_W, h: PAGE_H }),
+    fit: fitView,
+    maxZoom: 6,
+    doubleTapZoom: true,
+    onChange: (v, interacting) => {
+      paper.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.k})`;
+      positionFrame();
+      showZoomBadge(v);
+      if (interacting) {
+        // Cheap during the gesture: slide the already-rendered bitmap.
+        const r = v.k / renderedView.k;
+        canvas.style.transform = `translate(${v.tx - r * renderedView.tx}px, ${v.ty - r * renderedView.ty}px) scale(${r})`;
+      } else {
+        render();
+      }
+    },
+  });
+
+  let badgeTimer = 0;
+  function showZoomBadge(v: View): void {
+    const pct = Math.round((v.k / fitView().k) * 100);
+    zoomBadge.textContent = `${pct}%`;
+    zoomBadge.hidden = false;
+    window.clearTimeout(badgeTimer);
+    badgeTimer = window.setTimeout(() => (zoomBadge.hidden = true), 900);
   }
 
-  function redraw(): void {
-    clearCanvas(ctx, SPREAD_W, PAGE_H);
+  // --- rendering -------------------------------------------------------------
+  function render(): void {
+    const v = viewport.view;
+    ctx.setTransform(dpr * v.k, 0, 0, dpr * v.k, dpr * v.tx, dpr * v.ty);
+    clearCanvas(ctx);
     drawAll(ctx, strokes, 0);
-    hint.hidden = strokes.length > 0;
+    canvas.style.transform = '';
+    renderedView = v;
+    hint.hidden = strokes.length > 0 || images.length > 0;
+  }
+
+  function layout(): void {
+    const w = stage.clientWidth;
+    const h = stage.clientHeight;
+    if (!w || !h) return;
+    ctx = prepareCanvas(canvas, w, h, w, h);
+    dpr = canvas.width / w;
+    viewport.refit(); // -> onChange(view, false) -> render()
   }
 
   const ro = new ResizeObserver(() => layout());
   ro.observe(stage);
   layout();
 
-  // --- recording clock -----------------------------------------------------
+  // --- recording clock -------------------------------------------------------
   // New strokes continue after the existing recording so replays stay ordered.
   let timeOrigin: number | null = null;
+  function lastRecordedT(): number {
+    let t = 0;
+    for (const s of strokes) t = Math.max(t, s.points[s.points.length - 1]?.t ?? 0);
+    for (const i of images) t = Math.max(t, i.t);
+    return t;
+  }
   function nowT(): number {
     if (timeOrigin === null) {
-      const last = strokes.length ? strokes[strokes.length - 1]!.points.at(-1)!.t : 0;
-      timeOrigin = performance.now() - (strokes.length ? last + 800 : 0);
+      const last = lastRecordedT();
+      timeOrigin = performance.now() - (last ? last + 800 : 0);
     }
     return Math.max(0, Math.round(performance.now() - timeOrigin));
   }
 
-  // --- pointer capture -----------------------------------------------------
+  // --- photos ----------------------------------------------------------------
+  function imageSrc(img: CardImage): string {
+    return blobUrls.get(img.id) ?? imageUrl(card.id, img.id);
+  }
+
+  function renderImages(): void {
+    paperImages.replaceChildren();
+    for (const img of images) {
+      const node = document.createElement('img');
+      node.className = 'paper-photo';
+      node.dataset.id = img.id;
+      node.alt = '';
+      node.src = imageSrc(img);
+      placeImageNode(node, img);
+      paperImages.append(node);
+    }
+    hint.hidden = strokes.length > 0 || images.length > 0;
+  }
+
+  function placeImageNode(node: HTMLElement, img: CardImage): void {
+    node.style.left = `${img.x}px`;
+    node.style.top = `${img.y}px`;
+    node.style.width = `${img.w}px`;
+    node.style.height = `${img.h}px`;
+  }
+
+  function imageNode(imgId: string): HTMLElement | null {
+    return paperImages.querySelector<HTMLElement>(`[data-id="${imgId}"]`);
+  }
+
+  function positionFrame(): void {
+    if (!selected) return;
+    const a = viewport.contentToClient(selected.x, selected.y);
+    frame.style.left = `${a.x}px`;
+    frame.style.top = `${a.y}px`;
+    frame.style.width = `${selected.w * viewport.view.k}px`;
+    frame.style.height = `${selected.h * viewport.view.k}px`;
+  }
+
+  function select(img: CardImage | null): void {
+    selected = img;
+    arrangeLayer.hidden = !img;
+    paperImages.querySelectorAll<HTMLElement>('.paper-photo').forEach((n) => n.classList.toggle('selected', n.dataset.id === img?.id));
+    positionFrame();
+  }
+
+  function setMode(m: Mode): void {
+    mode = m;
+    arrangeBar.hidden = m !== 'arrange';
+    stage.classList.toggle('arranging', m === 'arrange');
+    if (m === 'write') select(null);
+  }
+
+  function hitImage(p: { x: number; y: number }): CardImage | null {
+    for (let i = images.length - 1; i >= 0; i--) {
+      const im = images[i]!;
+      if (p.x >= im.x && p.x <= im.x + im.w && p.y >= im.y && p.y <= im.y + im.h) return im;
+    }
+    return null;
+  }
+
+  async function addPhoto(file: File): Promise<void> {
+    if (images.length >= LIMITS.images) {
+      setStatus(`At most ${LIMITS.images} photos`, 'error');
+      return;
+    }
+    setStatus('Adding photo…', 'busy');
+    try {
+      const prep = await prepareImage(file);
+      // Place it on the emptier page, comfortably sized.
+      const leftCount = images.filter((i) => i.x + i.w / 2 < PAGE_W).length;
+      const page = leftCount <= images.length - leftCount ? 0 : 1;
+      let w = 560;
+      let h = (w * prep.height) / prep.width;
+      if (h > 880) {
+        h = 880;
+        w = (h * prep.width) / prep.height;
+      }
+      const placement = {
+        x: Math.round(page * PAGE_W + (PAGE_W - w) / 2 + (images.length % 3) * 30),
+        y: Math.round((PAGE_H - h) / 2 + (images.length % 3) * 30),
+        w: Math.round(w),
+        h: Math.round(h),
+        t: nowT(),
+      };
+      const res = await withSaveLock(() => uploadImage(card.id, editToken, prep.blob, placement));
+      blobUrls.set(res.image.id, prep.url);
+      images.push(res.image);
+      renderImages();
+      setMode('arrange');
+      select(res.image);
+      setStatus('Saved');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'Could not add photo', 'error');
+    }
+  }
+
+  async function removeSelected(): Promise<void> {
+    const img = selected;
+    if (!img) return;
+    select(null);
+    const idx = images.indexOf(img);
+    if (idx >= 0) images.splice(idx, 1);
+    renderImages();
+    setStatus('Saving…', 'busy');
+    try {
+      await withSaveLock(() => deleteImage(card.id, editToken, img.id));
+      setStatus('Saved');
+    } catch {
+      setStatus('Couldn’t remove photo', 'error');
+    }
+  }
+
+  // --- pointer input ----------------------------------------------------------
   let penMode = penSeen();
   interface Active {
     pointerId: number;
+    pointerType: string;
     stroke: Stroke;
     drawn: number;
     pressure: number;
-    rect: DOMRect;
     lastT: number;
+    startedAt: number;
+    firstEvent: PointerEvent;
   }
   let active: Active | null = null;
-
-  function accepts(e: PointerEvent): boolean {
-    if (e.pointerType === 'pen') {
-      if (!penMode) {
-        penMode = true;
-        setPenSeen();
-      }
-      return true;
-    }
-    if (e.pointerType === 'touch') return !penMode && e.isPrimary; // palm rejection once a pencil was seen
-    return (e.buttons & 1) === 1; // mouse: left button only
+  let activePointers = 0;
+  interface ImageDrag {
+    kind: 'move' | 'resize';
+    pointerId: number;
+    start: { x: number; y: number };
+    x0: number;
+    y0: number;
+    w0: number;
+    h0: number;
   }
+  let imageDrag: ImageDrag | null = null;
 
   function pressureOf(e: PointerEvent, prev: number): number {
     if (e.pointerType !== 'pen') return 0.5;
@@ -165,41 +365,103 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     return prev * 0.55 + raw * 0.45;
   }
 
-  function addPoint(a: Active, e: PointerEvent): void {
-    const x = ((e.clientX - a.rect.left) / a.rect.width) * SPREAD_W;
-    const y = ((e.clientY - a.rect.top) / a.rect.height) * PAGE_H;
+  function addPoint(a: Active, e: { clientX: number; clientY: number } & Partial<PointerEvent>): void {
+    const { x, y } = viewport.clientToContent(e.clientX, e.clientY);
     const pts = a.stroke.points;
     const last = pts[pts.length - 1];
     if (last && Math.hypot(x - last.x, y - last.y) < MIN_POINT_DISTANCE) return;
-    a.pressure = pressureOf(e, a.pressure);
+    a.pressure = pressureOf(e as PointerEvent, a.pressure);
     const t = Math.max(a.lastT, nowT());
     a.lastT = t;
-    const p: Point = {
-      x: Math.round(x * 10) / 10,
-      y: Math.round(y * 10) / 10,
-      p: Math.round(a.pressure * 100) / 100,
-      t,
-    };
+    const p: Point = { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, p: Math.round(a.pressure * 100) / 100, t };
     pts.push(p);
   }
 
-  function onDown(e: PointerEvent): void {
-    if (active || !accepts(e)) return;
-    e.preventDefault();
-    canvas.setPointerCapture(e.pointerId);
+  function startStroke(e: PointerEvent): void {
+    if (viewport.gesturing) return;
+    if (canvas.style.transform) render(); // settle any in-flight zoom before inking
+    stage.setPointerCapture(e.pointerId);
     active = {
       pointerId: e.pointerId,
+      pointerType: e.pointerType,
       stroke: { color, size, points: [] },
       drawn: 0,
       pressure: e.pointerType === 'pen' ? Math.min(1, Math.max(0.05, e.pressure || 0.5)) : 0.5,
-      rect: canvas.getBoundingClientRect(),
       lastT: 0,
+      startedAt: performance.now(),
+      firstEvent: e,
     };
     addPoint(active, e);
     hint.hidden = true;
   }
 
+  function cancelStroke(): void {
+    active = null;
+    render(); // wipes the tentative ink
+  }
+
+  function finishStroke(e: PointerEvent): void {
+    const a = active!;
+    if (e.type === 'pointerup') addPoint(a, e);
+    const s = a.stroke;
+    if (s.points.length) {
+      drawStrokeProgress(ctx, s, a.drawn, s.points.length, true, 0);
+      strokes.push(s);
+      markStrokesChanged(false);
+    }
+    active = null;
+  }
+
+  function onDown(e: PointerEvent): void {
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    activePointers++;
+    if (e.pointerType === 'pen' && !penMode) {
+      penMode = true;
+      setPenSeen();
+    }
+
+    if (mode === 'arrange') {
+      arrangeDown(e);
+      return;
+    }
+
+    if (e.pointerType === 'touch') {
+      if (penMode) {
+        viewport.pointerDown(e);
+        return;
+      }
+      if (active?.pointerType === 'touch') {
+        // Second finger: a young stroke becomes a pinch instead.
+        if (performance.now() - active.startedAt < 350 && active.stroke.points.length < 24) {
+          const first = active.firstEvent;
+          cancelStroke();
+          viewport.pointerDown(first);
+          viewport.pointerDown(e);
+        }
+        return;
+      }
+      if (viewport.gesturing) {
+        viewport.pointerDown(e);
+        return;
+      }
+      startStroke(e);
+      return;
+    }
+
+    if (e.pointerType === 'pen') {
+      if (!active) startStroke(e);
+      return;
+    }
+    if (e.button === 0 && !active) startStroke(e);
+  }
+
   function onMove(e: PointerEvent): void {
+    if (viewport.pointerMove(e)) return;
+    if (mode === 'arrange') {
+      arrangeMove(e);
+      return;
+    }
     if (!active || e.pointerId !== active.pointerId) return;
     e.preventDefault();
     const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
@@ -209,25 +471,76 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   }
 
   function onUp(e: PointerEvent): void {
+    activePointers = Math.max(0, activePointers - 1);
+    if (viewport.pointerUp(e)) {
+      if (activePointers === 0) scheduleSave();
+      return;
+    }
+    if (mode === 'arrange') {
+      arrangeUp(e);
+      return;
+    }
     if (!active || e.pointerId !== active.pointerId) return;
     e.preventDefault();
-    if (e.type === 'pointerup') addPoint(active, e);
-    const s = active.stroke;
-    if (s.points.length) {
-      drawStrokeProgress(ctx, s, active.drawn, s.points.length, true, 0);
-      strokes.push(s);
-      markDirty();
-    }
-    active = null;
+    finishStroke(e);
   }
 
-  canvas.addEventListener('pointerdown', onDown);
-  canvas.addEventListener('pointermove', onMove);
-  canvas.addEventListener('pointerup', onUp);
-  canvas.addEventListener('pointercancel', onUp);
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Arrange mode: drag photos, pull the corner handle, tap elsewhere to deselect.
+  function arrangeDown(e: PointerEvent): void {
+    const p = viewport.clientToContent(e.clientX, e.clientY);
+    if (selected) {
+      const corner = viewport.contentToClient(selected.x + selected.w, selected.y + selected.h);
+      const rect = stage.getBoundingClientRect();
+      const lx = e.clientX - rect.left;
+      const ly = e.clientY - rect.top;
+      if (Math.hypot(lx - corner.x, ly - corner.y) < 30) {
+        stage.setPointerCapture(e.pointerId);
+        imageDrag = { kind: 'resize', pointerId: e.pointerId, start: p, x0: selected.x, y0: selected.y, w0: selected.w, h0: selected.h };
+        return;
+      }
+    }
+    const hit = hitImage(p);
+    if (hit) {
+      select(hit);
+      stage.setPointerCapture(e.pointerId);
+      imageDrag = { kind: 'move', pointerId: e.pointerId, start: p, x0: hit.x, y0: hit.y, w0: hit.w, h0: hit.h };
+      return;
+    }
+    select(null);
+    viewport.pointerDown(e);
+  }
 
-  // --- tools ---------------------------------------------------------------
+  function arrangeMove(e: PointerEvent): void {
+    if (!imageDrag || !selected || e.pointerId !== imageDrag.pointerId) return;
+    const p = viewport.clientToContent(e.clientX, e.clientY);
+    const d = imageDrag;
+    if (d.kind === 'move') {
+      selected.x = Math.round(Math.min(SPREAD_W - 40, Math.max(40 - selected.w, d.x0 + (p.x - d.start.x))));
+      selected.y = Math.round(Math.min(PAGE_H - 40, Math.max(40 - selected.h, d.y0 + (p.y - d.start.y))));
+    } else {
+      const w = Math.max(120, Math.min(SPREAD_W, d.w0 + (p.x - d.start.x)));
+      selected.w = Math.round(w);
+      selected.h = Math.round((w * d.h0) / d.w0);
+    }
+    const node = imageNode(selected.id);
+    if (node) placeImageNode(node, selected);
+    positionFrame();
+  }
+
+  function arrangeUp(e: PointerEvent): void {
+    if (imageDrag && e.pointerId === imageDrag.pointerId) {
+      imageDrag = null;
+      markImagesChanged();
+    }
+  }
+
+  stage.addEventListener('pointerdown', onDown);
+  stage.addEventListener('pointermove', onMove);
+  stage.addEventListener('pointerup', onUp);
+  stage.addEventListener('pointercancel', onUp);
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // --- tools ------------------------------------------------------------------
   function selectIn(group: HTMLElement, target: HTMLElement): void {
     group.querySelectorAll('button').forEach((b) => {
       const on = b === target;
@@ -241,6 +554,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     if (!b) return;
     color = b.dataset.color!;
     selectIn(inks, b);
+    setMode('write');
   });
   const brushes = $(root, '#brushes');
   brushes.addEventListener('click', (e) => {
@@ -248,71 +562,136 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     if (!b) return;
     size = Number(b.dataset.size);
     selectIn(brushes, b);
+    setMode('write');
   });
   $(root, '#undo').addEventListener('click', () => {
     if (!strokes.length) return;
     strokes.pop();
-    redraw();
-    markDirty();
+    render();
+    markStrokesChanged(true);
   });
   $(root, '#clear').addEventListener('click', () => {
     if (!strokes.length) return;
-    if (!confirm('Clear everything you wrote on this card?')) return;
+    if (!confirm('Clear everything you wrote on this card? Photos stay.')) return;
     strokes.length = 0;
-    redraw();
-    markDirty();
+    render();
+    markStrokesChanged(true);
   });
 
-  // --- saving --------------------------------------------------------------
-  let dirty = false;
-  let saving = false;
+  const photoMenu = $(root, '#photo-menu');
+  const fileInput = $<HTMLInputElement>(root, '#file');
+  $(root, '#photo').addEventListener('click', () => {
+    $(root, '#arrange-photos').hidden = images.length === 0;
+    photoMenu.hidden = !photoMenu.hidden;
+  });
+  $(root, '#add-photo').addEventListener('click', () => {
+    photoMenu.hidden = true;
+    fileInput.value = '';
+    fileInput.click();
+  });
+  $(root, '#arrange-photos').addEventListener('click', () => {
+    photoMenu.hidden = true;
+    setMode('arrange');
+    if (images.length) select(images[images.length - 1]!);
+  });
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (file) void addPhoto(file);
+  });
+  $(root, '#arrange-done').addEventListener('click', () => setMode('write'));
+  $(root, '#img-delete').addEventListener('click', () => void removeSelected());
+  document.addEventListener('pointerdown', closeMenus, true);
+  function closeMenus(e: Event): void {
+    if (!photoMenu.hidden && !(e.target as HTMLElement).closest('#photo, #photo-menu')) photoMenu.hidden = true;
+  }
+
+  // --- saving ------------------------------------------------------------------
+  // Strokes are appended (tiny payloads); undo/clear replace the list once.
+  let serverStrokeCount = strokes.length;
+  let needFullStrokes = false;
+  let imagesDirty = false;
   let saveTimer = 0;
+  let lock: Promise<unknown> = Promise.resolve();
+
+  function withSaveLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = lock.then(fn, fn);
+    lock = run.catch(() => {});
+    return run;
+  }
 
   function setStatus(text: string, kind: '' | 'busy' | 'error' = ''): void {
     status.textContent = text;
     status.dataset.kind = kind;
   }
-  function markDirty(): void {
-    dirty = true;
+  const isDirty = () => needFullStrokes || strokes.length !== serverStrokeCount || imagesDirty;
+
+  function markStrokesChanged(full: boolean): void {
+    if (full) needFullStrokes = true;
     setStatus('Unsaved', 'busy');
+    scheduleSave();
+  }
+  function markImagesChanged(): void {
+    imagesDirty = true;
+    setStatus('Unsaved', 'busy');
+    scheduleSave();
+  }
+  function scheduleSave(delay = AUTOSAVE_DELAY): void {
     window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => void save(), AUTOSAVE_DELAY);
+    saveTimer = window.setTimeout(() => void save(), delay);
   }
+
   async function save(): Promise<void> {
-    if (saving) return;
-    if (!dirty) return;
-    saving = true;
-    dirty = false;
-    setStatus('Saving…', 'busy');
-    try {
-      await updateCard(card.id, token!, { strokes });
-      setStatus(dirty ? 'Unsaved' : 'Saved');
-    } catch (err) {
-      dirty = true;
-      setStatus(err instanceof ApiError && err.status === 403 ? 'Not allowed to edit' : 'Couldn’t save — retrying', 'error');
-      saveTimer = window.setTimeout(() => void save(), 4000);
-    } finally {
-      saving = false;
-      if (dirty && !saveTimer) markDirty();
+    if (!isDirty()) return;
+    if (activePointers > 0) {
+      scheduleSave(); // never serialise while a pen is on the paper
+      return;
     }
+    await withSaveLock(async () => {
+      setStatus('Saving…', 'busy');
+      try {
+        if (needFullStrokes || strokes.length < serverStrokeCount) {
+          const snapshot = strokes.slice();
+          const r = await updateCard(card.id, editToken, { strokes: snapshot });
+          needFullStrokes = false;
+          serverStrokeCount = r.strokeCount;
+        } else if (strokes.length > serverStrokeCount) {
+          const batch = strokes.slice(serverStrokeCount);
+          try {
+            const r = await appendStrokes(card.id, editToken, { after: serverStrokeCount, strokes: batch });
+            serverStrokeCount = r.strokeCount;
+          } catch (err) {
+            if (err instanceof ApiError && err.status === 409) {
+              needFullStrokes = true; // out of sync with the server; resend everything
+            } else throw err;
+          }
+        }
+        if (imagesDirty) {
+          imagesDirty = false;
+          await updateCard(card.id, editToken, { images: images.slice() });
+        }
+        setStatus(isDirty() ? 'Unsaved' : 'Saved', isDirty() ? 'busy' : '');
+      } catch (err) {
+        setStatus(err instanceof ApiError && err.status === 403 ? 'Not allowed to edit' : 'Couldn’t save — retrying', 'error');
+        scheduleSave(4000);
+        return;
+      }
+    });
+    if (isDirty()) scheduleSave(200);
   }
+
   async function flush(): Promise<void> {
     window.clearTimeout(saveTimer);
-    saveTimer = 0;
-    while (dirty || saving) {
+    let attempts = 0;
+    while (isDirty() && attempts++ < 3) {
       await save();
-      if (saving) await new Promise((r) => setTimeout(r, 100));
-      if (dirty && !saving) {
-        // save() failed; give up on blocking and let the retry timer handle it
-        break;
-      }
+      await lock;
     }
   }
   const onVisibility = () => {
     if (document.visibilityState === 'hidden') void flush();
   };
   const onBeforeUnload = (e: BeforeUnloadEvent) => {
-    if (dirty || saving) e.preventDefault();
+    if (isDirty()) e.preventDefault();
   };
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('beforeunload', onBeforeUnload);
@@ -320,6 +699,7 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
   // --- share / navigation --------------------------------------------------
   const share = $(root, '#share');
   $(root, '#done').addEventListener('click', async () => {
+    setMode('write');
     share.hidden = false;
     await flush();
   });
@@ -351,11 +731,17 @@ export async function renderEditor(root: HTMLElement, id: string): Promise<Clean
     navigate(`/c/${card.id}`);
   });
 
+  renderImages();
+
   return () => {
     ro.disconnect();
+    viewport.destroy();
     window.clearTimeout(saveTimer);
+    window.clearTimeout(badgeTimer);
     document.removeEventListener('visibilitychange', onVisibility);
+    document.removeEventListener('pointerdown', closeMenus, true);
     window.removeEventListener('beforeunload', onBeforeUnload);
-    if (dirty) void save();
+    for (const url of blobUrls.values()) URL.revokeObjectURL(url);
+    if (isDirty()) void save();
   };
 }

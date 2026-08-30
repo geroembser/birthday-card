@@ -1,10 +1,10 @@
 import type { Point, Stroke } from '../../shared/types.ts';
 
 /**
- * Ink rendering. Strokes are rendered as chains of quadratic curves through the
- * midpoints of consecutive samples, which stays smooth and can be drawn
- * incrementally: the same routine powers live drawing in the editor and the
- * timed replay in the viewer.
+ * Ink rendering. A stroke is a chain of drawable "units": a start cap, one
+ * quadratic curve per interior sample (through midpoints, control = sample)
+ * and a tail. Units can be drawn incrementally and partially, which lets the
+ * editor draw live, and the viewer replay with a moving pen tip.
  */
 
 export const INKS = [
@@ -22,23 +22,26 @@ export const BRUSHES = [
   { id: 'bold', name: 'Bold', size: 13 },
 ] as const;
 
-export interface InkTarget {
-  ctx: CanvasRenderingContext2D;
-  /** Added to every x coordinate (e.g. -PAGE_W for the right-hand page). */
-  offsetX: number;
-}
+/** Largest backing store we allow per canvas (device pixels). */
+const MAX_CANVAS_PIXELS = 3_500_000;
 
-/** Sizes a canvas for its CSS box at device resolution and maps logical units onto it. */
+/**
+ * Sizes a canvas for its CSS box at device resolution (times `pixelScale`, for
+ * content that will be zoomed) and maps `logicalW x logicalH` onto it.
+ */
 export function prepareCanvas(
   canvas: HTMLCanvasElement,
   logicalW: number,
   logicalH: number,
   cssW: number,
   cssH: number,
+  pixelScale = 1,
 ): CanvasRenderingContext2D {
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const w = Math.max(1, Math.round(cssW * dpr));
-  const h = Math.max(1, Math.round(cssH * dpr));
+  let scale = Math.min(window.devicePixelRatio || 1, 3) * pixelScale;
+  const px = cssW * cssH * scale * scale;
+  if (px > MAX_CANVAS_PIXELS) scale *= Math.sqrt(MAX_CANVAS_PIXELS / px);
+  const w = Math.max(1, Math.round(cssW * scale));
+  const h = Math.max(1, Math.round(cssH * scale));
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
@@ -52,8 +55,12 @@ export function prepareCanvas(
   return ctx;
 }
 
-export function clearCanvas(ctx: CanvasRenderingContext2D, logicalW: number, logicalH: number): void {
-  ctx.clearRect(-2, -2, logicalW + 4, logicalH + 4);
+/** Clears the whole backing store regardless of the current transform. */
+export function clearCanvas(ctx: CanvasRenderingContext2D): void {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.restore();
 }
 
 function widthFor(size: number, pressure: number): number {
@@ -64,11 +71,79 @@ function mid(a: Point, b: Point): { x: number; y: number } {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
+/** Number of drawable units given `n` known points (and whether the stroke ended). */
+export function unitCount(n: number, final: boolean): number {
+  if (n <= 0) return 0;
+  if (n === 1) return final ? 1 : 0;
+  return n - 1 + (final ? 1 : 0);
+}
+
 /**
- * Draws the part of `stroke` that becomes drawable when `available` points are
- * known, given `drawn` points were already consumed. Returns the new `drawn`.
- * When `final` is true the trailing half-segment (and single-point dots) are
- * drawn too.
+ * Draws unit `k` of a stroke, optionally only its first `frac` (0..1] so a pen
+ * tip can sit part-way along it.
+ */
+export function drawUnit(ctx: CanvasRenderingContext2D, stroke: Stroke, k: number, offsetX: number, frac = 1): void {
+  const pts = stroke.points;
+  const n = pts.length;
+  if (n === 0 || k < 0) return;
+  ctx.strokeStyle = stroke.color;
+  ctx.fillStyle = stroke.color;
+
+  if (n === 1) {
+    const p0 = pts[0]!;
+    ctx.beginPath();
+    ctx.arc(p0.x + offsetX, p0.y, widthFor(stroke.size, p0.p) / 2, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+
+  let ax: number, ay: number, cx: number, cy: number, bx: number, by: number;
+  let curved = false;
+  let pressure: number;
+  if (k === 0) {
+    const p0 = pts[0]!;
+    const m = mid(p0, pts[1]!);
+    ax = p0.x; ay = p0.y; bx = m.x; by = m.y; cx = ax; cy = ay;
+    pressure = p0.p;
+  } else if (k <= n - 2) {
+    const prev = pts[k - 1]!;
+    const cur = pts[k]!;
+    const next = pts[k + 1]!;
+    const a = mid(prev, cur);
+    const b = mid(cur, next);
+    ax = a.x; ay = a.y; cx = cur.x; cy = cur.y; bx = b.x; by = b.y;
+    curved = true;
+    pressure = cur.p;
+  } else if (k === n - 1) {
+    const prev = pts[n - 2]!;
+    const last = pts[n - 1]!;
+    const a = mid(prev, last);
+    ax = a.x; ay = a.y; bx = last.x; by = last.y; cx = ax; cy = ay;
+    pressure = last.p;
+  } else {
+    return;
+  }
+
+  if (frac < 1) {
+    // de Casteljau split at `frac`: keep the first part.
+    const f = Math.max(0, frac);
+    const q0x = ax + (cx - ax) * f, q0y = ay + (cy - ay) * f;
+    const q1x = cx + (bx - cx) * f, q1y = cy + (by - cy) * f;
+    bx = q0x + (q1x - q0x) * f; by = q0y + (q1y - q0y) * f;
+    cx = q0x; cy = q0y;
+  }
+
+  ctx.lineWidth = widthFor(stroke.size, pressure);
+  ctx.beginPath();
+  ctx.moveTo(ax + offsetX, ay);
+  if (curved) ctx.quadraticCurveTo(cx + offsetX, cy, bx + offsetX, by);
+  else ctx.lineTo(bx + offsetX, by);
+  ctx.stroke();
+}
+
+/**
+ * Draws the units that became drawable now that `available` points are known,
+ * given `drawn` units were already drawn. Returns the new `drawn`.
  */
 export function drawStrokeProgress(
   ctx: CanvasRenderingContext2D,
@@ -78,61 +153,9 @@ export function drawStrokeProgress(
   final: boolean,
   offsetX: number,
 ): number {
-  const pts = stroke.points;
-  const n = Math.min(available, pts.length);
-  if (n === 0) return 0;
-  let d = drawn;
-
-  ctx.strokeStyle = stroke.color;
-  ctx.fillStyle = stroke.color;
-
-  if (d === 0) {
-    const p0 = pts[0]!;
-    if (n >= 2) {
-      const m = mid(p0, pts[1]!);
-      ctx.lineWidth = widthFor(stroke.size, p0.p);
-      ctx.beginPath();
-      ctx.moveTo(p0.x + offsetX, p0.y);
-      ctx.lineTo(m.x + offsetX, m.y);
-      ctx.stroke();
-      d = 1;
-    } else if (final) {
-      ctx.beginPath();
-      ctx.arc(p0.x + offsetX, p0.y, widthFor(stroke.size, p0.p) / 2, 0, Math.PI * 2);
-      ctx.fill();
-      return 1;
-    } else {
-      return 0;
-    }
-  }
-
-  // Segment k (1 <= k <= n-2): mid(k-1,k) -> mid(k,k+1), control = k.
-  while (d + 1 <= n - 1) {
-    const prev = pts[d - 1]!;
-    const cur = pts[d]!;
-    const next = pts[d + 1]!;
-    const a = mid(prev, cur);
-    const b = mid(cur, next);
-    ctx.lineWidth = widthFor(stroke.size, cur.p);
-    ctx.beginPath();
-    ctx.moveTo(a.x + offsetX, a.y);
-    ctx.quadraticCurveTo(cur.x + offsetX, cur.y, b.x + offsetX, b.y);
-    ctx.stroke();
-    d++;
-  }
-
-  if (final && n >= 2 && d === n - 1) {
-    const prev = pts[n - 2]!;
-    const last = pts[n - 1]!;
-    const a = mid(prev, last);
-    ctx.lineWidth = widthFor(stroke.size, last.p);
-    ctx.beginPath();
-    ctx.moveTo(a.x + offsetX, a.y);
-    ctx.lineTo(last.x + offsetX, last.y);
-    ctx.stroke();
-    d = n;
-  }
-  return d;
+  const total = unitCount(Math.min(available, stroke.points.length), final);
+  for (let k = drawn; k < total; k++) drawUnit(ctx, stroke, k, offsetX);
+  return Math.max(drawn, total);
 }
 
 /** Draws every stroke completely. */
