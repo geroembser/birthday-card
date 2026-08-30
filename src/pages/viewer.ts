@@ -6,6 +6,7 @@ import { clearCanvas, drawAll } from '../lib/ink.ts';
 import { playCard, type Page, type PageTargets, type Replay } from '../lib/replay.ts';
 import { getEditToken } from '../lib/storage.ts';
 import { seedColor } from '../lib/themes.ts';
+import { logoHtml } from '../components/logo.ts';
 import { createViewport, type View, type Viewport } from '../lib/viewport.ts';
 import type { Cleanup } from '../router.ts';
 
@@ -45,10 +46,11 @@ export async function renderViewer(root: HTMLElement, id: string): Promise<Clean
       <button type="button" class="btn ghost small" id="replay">${icons.replay} Watch again</button>
       ${isOwner ? `<a class="btn ghost small" data-link href="/edit/${card.id}">${icons.pencil} Edit</a>` : ''}
       <a class="btn small" data-link href="/">Make your own card</a>
+      <a class="brand-link viewer-brand" data-link href="/" aria-label="birthday.card home">${logoHtml('brand-sm')}</a>
     </div>`;
   root.replaceChildren(view);
 
-  const card3d = createCard3D(card.theme, card.recipient, card.id);
+  const card3d = createCard3D(card.theme, card.recipient);
   const scene = card3d.el;
   $(view, '.viewer-stage').append(scene);
   card3d.setImages(card.images, (img) => imageUrl(card.id, img.id));

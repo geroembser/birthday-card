@@ -87,6 +87,45 @@ input {
   color: var(--muted);
 }
 
+/* --- brand ------------------------------------------------------------------ */
+
+.brand {
+  display: inline-block;
+  font-family: 'Poiret One', var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.brand-dot {
+  color: #389eff;
+  font-size: 1.4em;
+  font-weight: 700;
+  -webkit-text-stroke: 0.03em #389eff;
+  line-height: 0;
+}
+
+.brand-lg {
+  font-size: 30px;
+}
+
+.brand-sm {
+  font-size: 20px;
+}
+
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+
+.hero-brand {
+  margin: 0 0 18px;
+}
+
 /* --- buttons ---------------------------------------------------------------- */
 
 .btn {
@@ -370,9 +409,17 @@ input {
 
 .home-footer {
   margin-top: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   text-align: center;
   font-size: 13px;
   color: var(--muted);
+}
+
+.home-footer .brand {
+  color: var(--ink);
 }
 
 /* --- cover art --------------------------------------------------------------- */
@@ -569,6 +616,16 @@ input {
   opacity: 1;
   color: #2b2b2b;
 }
+.cover-art[data-theme='circle'] .cover-brand {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 5.5cqw;
+  text-align: center;
+  font-size: 5.6cqw;
+  color: #2b2b2b;
+  text-shadow: 0 0 1cqw #fff, 0 0 2cqw #fff;
+}
 
 /* --- the 3D card ------------------------------------------------------------- */
 
@@ -760,7 +817,19 @@ input {
 }
 
 .viewer[data-theme='circle'] .btn.ghost,
-.viewer[data-theme='circle'] .viewer-footer .btn.ghost {
+.viewer[data-theme='circle'] .viewer-brand {
+  flex-basis: 100%;
+  justify-content: center;
+  margin-top: 2px;
+  opacity: 0.85;
+  font-size: 16px;
+}
+
+.viewer-brand .brand-sm {
+  font-size: 16px;
+}
+
+.viewer-footer .btn.ghost {
   color: #fff;
   background: rgba(255, 255, 255, 0.18);
 }
@@ -778,7 +847,7 @@ input {
 .viewer-stage {
   flex: 1;
   min-height: 0;
-  padding: calc(env(safe-area-inset-top) + 24px) 16px 24px;
+  padding: calc(env(safe-area-inset-top) + 16px) 16px 72px;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
@@ -851,13 +920,37 @@ input {
   display: none;
 }
 
+.viewer-brand {
+  flex-basis: 100%;
+  justify-content: center;
+  margin-top: 2px;
+  opacity: 0.85;
+  font-size: 16px;
+}
+
+.viewer-brand .brand-sm {
+  font-size: 16px;
+}
+
 .viewer-footer .btn.ghost {
   background: rgba(255, 252, 246, 0.72);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
 
-.viewer[data-theme='midnight'] .viewer-footer .btn.ghost {
+.viewer[data-theme='midnight'] .viewer-brand {
+  flex-basis: 100%;
+  justify-content: center;
+  margin-top: 2px;
+  opacity: 0.85;
+  font-size: 16px;
+}
+
+.viewer-brand .brand-sm {
+  font-size: 16px;
+}
+
+.viewer-footer .btn.ghost {
   background: rgba(20, 26, 50, 0.65);
 }
 
@@ -912,6 +1005,10 @@ body.editing {
   align-items: center;
   gap: 12px;
   padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+}
+
+.editor-bar .brand-link {
+  padding: 0 4px;
 }
 
 .editor-title {

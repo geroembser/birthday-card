@@ -148,7 +148,7 @@ function escapeHtml(s: string): string {
 export function injectCardMeta(html: string, card: CardData): string {
   const who = card.recipient ? ` for ${card.recipient}` : '';
   const title = escapeHtml(`A birthday card${who}`);
-  const desc = 'Someone handwrote you a birthday card. Tap to open it.';
+  const desc = 'Someone handwrote you a birthday card on birthday.card. Tap to open it.';
   return html
     .replace(/<title>.*?<\/title>/, `<title>${title}</title>`)
     .replace(

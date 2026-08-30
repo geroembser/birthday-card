@@ -6,15 +6,16 @@ import { listMyCards, rememberCard } from '../lib/storage.ts';
 import { THEMES, themeById } from '../lib/themes.ts';
 import { navigate } from '../router.ts';
 import { renderCover } from '../components/cover.ts';
+import { logoHtml } from '../components/logo.ts';
 
 export function renderHome(root: HTMLElement): void {
-  document.title = 'Birthday Card';
+  document.title = 'birthday.card';
   const mine = listMyCards();
 
   root.innerHTML = `
     <main class="home">
       <section class="hero">
-        <p class="eyebrow">Birthday Card</p>
+        <p class="hero-brand">${logoHtml('brand-lg')}</p>
         <h1 class="display">Handwrite a card.<br /><em>Share a link.</em></h1>
         <p class="lead">
           Pick up your Apple Pencil and write a birthday message the way you would on paper.
@@ -65,7 +66,7 @@ export function renderHome(root: HTMLElement): void {
           : ''
       }
 
-      <footer class="home-footer">Made for iPad and Apple Pencil, works anywhere with a browser.</footer>
+      <footer class="home-footer">${logoHtml('brand-sm')}<span>Made for iPad and Apple Pencil, works anywhere with a browser.</span></footer>
     </main>`;
 
   // Theme picker

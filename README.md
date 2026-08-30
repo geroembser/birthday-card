@@ -1,4 +1,4 @@
-# Birthday Card
+# birthday.card
 
 Handwrite a birthday card on your iPad, share it as a link, and let them watch every stroke unfold.
 

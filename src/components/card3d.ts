@@ -24,7 +24,7 @@ export interface Card3D {
 
 const PIXEL_SCALE = 2; // extra canvas resolution so zooming in stays crisp
 
-export function createCard3D(theme: ThemeId, recipient: string, seed?: string): Card3D {
+export function createCard3D(theme: ThemeId, recipient: string): Card3D {
   const scene = el('div', 'scene');
   const page = (cls: string) => `
     <div class="page ${cls}">
@@ -49,7 +49,7 @@ export function createCard3D(theme: ThemeId, recipient: string, seed?: string): 
   const float = $(scene, '.card-float');
   const card = $(scene, '.card3d');
   const cover = $(scene, '.cover');
-  $(scene, '.face-front').append(renderCover(theme, recipient, seed));
+  $(scene, '.face-front').append(renderCover(theme, recipient));
   const rightPage = $(scene, '.page-right');
   const pages = [
     { root: $(scene, '.page-left'), offsetX: 0 },
