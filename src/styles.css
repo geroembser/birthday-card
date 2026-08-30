@@ -810,6 +810,11 @@ input {
   font-family: 'Nunito', var(--font-ui);
 }
 
+.viewer[data-theme='circle'] .viewer-brand .brand-dot {
+  color: #fff;
+  -webkit-text-stroke-color: #fff;
+}
+
 .viewer[data-theme='circle'] .tap-hint {
   font-family: 'Nunito', var(--font-ui);
   font-style: normal;
